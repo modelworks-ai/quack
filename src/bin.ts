@@ -214,7 +214,24 @@ function apiBaseOverride(value: string | null): string | undefined {
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  const [cmd, ...rest] = process.argv.slice(2);
+  const argv = process.argv.slice(2);
+
+  // Extract global flags (--api-base) before dispatching so command
+  // handlers only see positional args and their own flags.
+  const filtered: string[] = [];
+  let apiBaseOverrideVal: string | null = null;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--api-base" && i + 1 < argv.length) {
+      apiBaseOverrideVal = argv[++i];
+      continue;
+    }
+    filtered.push(argv[i]);
+  }
+  if (apiBaseOverrideVal) {
+    process.env.QUACK_API_BASE = apiBaseOverrideVal;
+  }
+
+  const [cmd, ...rest] = filtered;
 
   if (!cmd || cmd === "--help" || cmd === "-h") {
     printHelp();
