@@ -7,7 +7,7 @@
 
 import { getApiBase, loadCredentials, login, logout } from "./auth.js";
 import { addCircuit, ensureState, refreshCircuits, removeCircuit } from "./circuit.js";
-import { launchOpenCode } from "./launch.js";
+import { listAgents, getAgent } from "./agents/registry.js";
 import {
   initProject,
   isQuackProject,
@@ -31,6 +31,7 @@ Usage:
   quack opencode [args]                   Start proxy + launch opencode (SSE circuits only)
   quack opencode --print                  Show injected config, don't launch
   quack opencode --verbose                Launch with proxy request logging
+  quack agents                            List available agents
   quack login                             OAuth flow → store credentials
   quack logout                            Revoke + delete credentials
   quack whoami                            Show current user
@@ -158,7 +159,14 @@ async function cmdRefresh(args: string[]): Promise<void> {
   }
 }
 
-async function cmdOpencode(args: string[]): Promise<void> {
+async function cmdAgent(agentName: string, args: string[]): Promise<void> {
+  const agent = getAgent(agentName);
+  if (!agent) {
+    console.error(`Unknown agent: ${agentName}`);
+    console.error("Run `quack agents` to see available agents.");
+    process.exit(1);
+  }
+
   const print = args.includes("--print");
   const verbose = args.includes("--verbose");
   const passThrough = args.filter((a) => !a.startsWith("--"));
@@ -189,9 +197,19 @@ async function cmdOpencode(args: string[]): Promise<void> {
     return c.access_token;
   };
 
-  const result = await launchOpenCode({
+  const state = readState();
+
+  // Proxy port is assigned by the agent at launch time (it starts the
+  // proxy). For buildConfig (used in --print), we pass 0 as a placeholder;
+  // the agent replaces it with the real port.
+  const ctx = {
+    proxyPort: 0,
     apiBase,
     getAccessToken,
+    state,
+  };
+
+  const result = await agent.launch(ctx, {
     args: passThrough,
     verbose,
     print,
@@ -200,6 +218,26 @@ async function cmdOpencode(args: string[]): Promise<void> {
   if (result.exitCode !== null) {
     process.exit(result.exitCode);
   }
+}
+
+async function cmdAgents(args: string[]): Promise<void> {
+  const sub = args[0];
+
+  if (!sub || sub === "list") {
+    const agents = listAgents();
+    console.log("Available agents:\n");
+    for (const agent of agents) {
+      console.log(`  ${agent.name.padEnd(12)} ${agent.description}`);
+    }
+    console.log(
+      "\nThese agents are built into quack. New agents appear automatically\nwhen you update quack.",
+    );
+    return;
+  }
+
+  console.error(`Unknown agents subcommand: ${sub}`);
+  console.error("Usage: quack agents [list]");
+  process.exit(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -277,13 +315,22 @@ async function main(): Promise<void> {
       case "refresh":
         await cmdRefresh(rest);
         break;
-      case "opencode":
-        await cmdOpencode(rest);
+      case "agents":
+        await cmdAgents(rest);
         break;
-      default:
+      case "opencode":
+        await cmdAgent("opencode", rest);
+        break;
+      default: {
+        // Check if it's a built-in agent name.
+        if (getAgent(cmd)) {
+          await cmdAgent(cmd, rest);
+          break;
+        }
         console.error(`Unknown command: ${cmd}`);
         printHelp();
         process.exit(1);
+      }
     }
   } catch (err) {
     console.error(`error: ${(err as Error).message}`);
