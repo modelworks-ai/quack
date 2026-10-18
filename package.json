@@ -1,0 +1,33 @@
+{
+  "name": "@modelworks/quack",
+  "version": "0.1.0",
+  "description": "Git-like authenticated circuit launcher for ModelWorks with a local proxy.",
+  "type": "module",
+  "bin": {
+    "quack": "dist/bin.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "tsc",
+    "dev": "tsc --watch"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^22.0.0"
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/modelworks-ai/quack.git"
+  },
+  "homepage": "https://github.com/modelworks-ai/quack",
+  "bugs": {
+    "url": "https://github.com/modelworks-ai/quack/issues"
+  }
+}
