@@ -6,7 +6,7 @@
  */
 
 import { getApiBase, loadCredentials, login, logout } from "./auth.js";
-import { addCircuit, refreshCircuits, removeCircuit } from "./circuit.js";
+import { addCircuit, ensureState, refreshCircuits, removeCircuit } from "./circuit.js";
 import { launchOpenCode } from "./launch.js";
 import {
   initProject,
@@ -169,6 +169,15 @@ async function cmdOpencode(args: string[]): Promise<void> {
     console.error("Not logged in. Run `quack login` first.");
     process.exit(1);
   }
+
+  if (!isQuackProject()) {
+    console.error("Not a quack project. Run `quack init` first.");
+    process.exit(1);
+  }
+
+  // Auto-sync: create adaptors for circuits in config but missing from
+  // state (cloned repo case — like `npm install` creating node_modules).
+  await ensureState(apiBase);
 
   // `getAccessToken` must return the live (possibly-refreshed) token.
   // We read from disk on every call so the proxy always sees the latest.

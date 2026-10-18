@@ -13,6 +13,7 @@ import {
   addCircuitToConfig,
   getCircuitState,
   readConfig,
+  readState,
   removeCircuitFromConfig,
   removeCircuitState,
   upsertCircuitState,
@@ -489,4 +490,24 @@ export async function refreshCircuits(
     results.push(result);
   }
   return results;
+}
+
+/**
+ * Auto-sync: for circuits in config but missing from state (cloned repo
+ * case), run the same resolve + discover + create flow as `quack add`,
+ * writing to state only (not config).
+ *
+ * Called by `quack opencode` before building the injected config.
+ */
+export async function ensureState(apiBase: string): Promise<void> {
+  const config = readConfig();
+  const state = readState();
+
+  const missing = config.circuits.filter(
+    (c) => !(c.circuit_uid in state.circuits),
+  );
+
+  for (const entry of missing) {
+    await addCircuit(entry.url, apiBase);
+  }
 }

@@ -101,11 +101,24 @@ export function writeConfig(config: QuackConfig): void {
 // State read/write (`.quack/state.json` — gitignored, per-user)
 // ---------------------------------------------------------------------------
 
-/** Read the project state. Throws if `.quack/` doesn't exist. */
+/**
+ * Read the project state.
+ *
+ * Returns an empty state if `.quack/` doesn't exist or `state.json`
+ * is missing (e.g. a freshly cloned repo where only `config.json`
+ * was committed). The caller is responsible for auto-syncing state
+ * from config when needed.
+ */
 export function readState(): QuackState {
-  requireQuackProject();
-  const raw = fs.readFileSync(statePath(), "utf8");
-  return JSON.parse(raw) as QuackState;
+  if (!isQuackProject()) {
+    return emptyState();
+  }
+  try {
+    const raw = fs.readFileSync(statePath(), "utf8");
+    return JSON.parse(raw) as QuackState;
+  } catch {
+    return emptyState();
+  }
 }
 
 /** Write the project state. */
