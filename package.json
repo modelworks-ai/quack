@@ -12,7 +12,9 @@
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "tsc",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
+    "test:run": "node --test dist-test/test/*.test.js"
   },
   "devDependencies": {
     "typescript": "^5.5.0",

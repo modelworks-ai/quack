@@ -48,12 +48,12 @@ const ADAPTER_TYPE_MAP: Record<string, string> = {
 };
 
 /** Convert a circuit-definition adapter type to the API enum format. */
-function toApiAdapterType(defType: string): string {
+export function toApiAdapterType(defType: string): string {
   return ADAPTER_TYPE_MAP[defType] ?? defType;
 }
 
 /** Convert an API enum adapter type back to circuit-definition format. */
-function fromApiAdapterType(apiType: string): string {
+export function fromApiAdapterType(apiType: string): string {
   for (const [def, api] of Object.entries(ADAPTER_TYPE_MAP)) {
     if (api === apiType) return def;
   }
