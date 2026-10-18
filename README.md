@@ -14,6 +14,22 @@ The proxy holds your access token in memory and injects `Authorization: Bearer <
 
 ## Install
 
+**Option 1 — curl (no npm required):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/modelworks-ai/quack/main/install/install.sh | bash
+```
+
+Downloads quack to `~/.quack/`. If Node 18+ isn't on your system, the script
+automatically downloads a bundled Node binary — so this works on a clean
+machine with nothing but `curl` and `tar` installed.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/modelworks-ai/quack/main/install/install.sh | bash -s -- --version 0.1.0
+```
+
+**Option 2 — npm:**
+
 ```bash
 npm i -g @modelworks/quack
 ```
