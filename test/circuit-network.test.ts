@@ -415,3 +415,82 @@ test("ensureState: no-op when state is already synced", async () => {
     cleanupDir();
   }
 });
+
+test("ensureState: skips circuits that return 403 (no access)", async () => {
+  const { cleanup: cleanupDir } = withTempDir();
+  const { cleanup: cleanupConfig } = withTempConfigHome();
+  try {
+    fs.mkdirSync(".quack", { recursive: true });
+    fs.writeFileSync(
+      ".quack/config.json",
+      JSON.stringify({
+        version: 1,
+        circuits: [
+          {
+            url: "https://modelworks.ai/circuits/c-private",
+            circuit_uid: "c-private",
+            name: "Private Circuit",
+            added_at: "2026-01-01T00:00:00Z",
+          },
+          {
+            url: "https://modelworks.ai/circuits/c-public",
+            circuit_uid: "c-public",
+            name: "Public Circuit",
+            added_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+      }),
+    );
+    // NO state.json — simulates cloned repo
+    writeCredentials(API_BASE);
+
+    const { cleanup: cleanupFetch } = mockFetch({
+      // Private circuit → 403
+      "GET /api/circuits/c-private": {
+        status: 403,
+        body: JSON.stringify({ status: "error", status_code: 403 }),
+      },
+      // Public circuit resolves normally
+      "GET /api/circuits/c-public": {
+        json: {
+          status: "success",
+          payload: { uid: "c-public", name: "Public Circuit", user_uid: "usr-other" },
+        },
+      },
+      "GET /api/circuits/c-public/primary": {
+        json: {
+          status: "success",
+          payload: {
+            uid: "cv-public",
+            circuit_uid: "c-public",
+            state: "RUNNING",
+            json_blob: null,
+          },
+        },
+      },
+      "GET /api/circuit-adaptors/by-circuit-version/cv-public": {
+        json: { status: "success", payload: [] },
+      },
+      "POST /api/circuit-adaptors": {
+        json: {
+          status: "success",
+          payload: { uid: "ca-public", adapter_type: "OPEN_AI_SSE" },
+        },
+      },
+    });
+
+    try {
+      await ensureState(API_BASE);
+      // The private circuit should have been skipped (not in state),
+      // the public one should be synced.
+      const state = JSON.parse(fs.readFileSync(".quack/state.json", "utf8"));
+      assert.ok(!("c-private" in state.circuits), "private circuit should be skipped");
+      assert.ok("c-public" in state.circuits, "public circuit should be synced");
+    } finally {
+      cleanupFetch();
+    }
+  } finally {
+    cleanupConfig();
+    cleanupDir();
+  }
+});

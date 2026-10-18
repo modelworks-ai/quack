@@ -28,6 +28,22 @@ import type {
   ParsedCircuitRef,
 } from "./types.js";
 
+/**
+ * HTTP error with status code, thrown by `parseJson` on non-OK responses.
+ * Lets callers distinguish 403 (access denied) from other failures.
+ */
+export class HttpError extends Error {
+  readonly status: number;
+  readonly body: string;
+
+  constructor(status: number, statusText: string, body: string) {
+    super(`HTTP ${status} ${statusText}${body ? ` — ${body}` : ""}`);
+    this.name = "HttpError";
+    this.status = status;
+    this.body = body;
+  }
+}
+
 /** The adapter type string for OpenAI-compatible SSE adaptors. */
 const OPEN_AI_SSE = "OPEN_AI_SSE";
 
@@ -147,9 +163,7 @@ async function authedFetch(
 async function parseJson<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(
-      `HTTP ${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`,
-    );
+    throw new HttpError(res.status, res.statusText, text);
   }
   const body = (await res.json()) as T;
   return body;
@@ -484,10 +498,20 @@ export async function refreshCircuits(
 
   const results: AddResult[] = [];
   for (const entry of targets) {
-    // Re-add (re-resolve + re-discover + re-create). `addCircuit` upserts state.
-    const result = await addCircuit(entry.url, apiBase);
-    result.added = false; // It was already in config; we just refreshed.
-    results.push(result);
+    try {
+      // Re-add (re-resolve + re-discover + re-create). `addCircuit` upserts state.
+      const result = await addCircuit(entry.url, apiBase);
+      result.added = false; // It was already in config; we just refreshed.
+      results.push(result);
+    } catch (err) {
+      if (err instanceof HttpError && err.status === 403) {
+        process.stderr.write(
+          `⚠ skipping ${entry.circuit_uid} (no access — not authorized)\n`,
+        );
+        continue;
+      }
+      throw err;
+    }
   }
   return results;
 }
@@ -508,6 +532,16 @@ export async function ensureState(apiBase: string): Promise<void> {
   );
 
   for (const entry of missing) {
-    await addCircuit(entry.url, apiBase);
+    try {
+      await addCircuit(entry.url, apiBase);
+    } catch (err) {
+      if (err instanceof HttpError && err.status === 403) {
+        process.stderr.write(
+          `⚠ skipping ${entry.circuit_uid} (no access — not authorized)\n`,
+        );
+        continue;
+      }
+      throw err;
+    }
   }
 }
