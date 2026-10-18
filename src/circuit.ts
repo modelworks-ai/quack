@@ -30,6 +30,35 @@ import type {
 /** The adapter type string for OpenAI-compatible SSE adaptors. */
 const OPEN_AI_SSE = "OPEN_AI_SSE";
 
+/**
+ * Map adapter type from circuit definition format (SCREAMING_SNAKE_CASE,
+ * as found in `json_blob`'s `adapters` array) to API enum format
+ * (PascalCase, as required by `POST /circuit-adaptors`).
+ *
+ * Example: `"OPEN_AI_SSE"` → `"OpenAiSse"`.
+ */
+const ADAPTER_TYPE_MAP: Record<string, string> = {
+  OPEN_AI_SSE: "OpenAiSse",
+  MODELWORKS_SSE: "ModelworksSse",
+  MODELWORKS_HTTP: "ModelworksHTTP",
+  MCP: "MCP",
+  XMCP: "XMCP",
+  NONE: "None",
+};
+
+/** Convert a circuit-definition adapter type to the API enum format. */
+function toApiAdapterType(defType: string): string {
+  return ADAPTER_TYPE_MAP[defType] ?? defType;
+}
+
+/** Convert an API enum adapter type back to circuit-definition format. */
+function fromApiAdapterType(apiType: string): string {
+  for (const [def, api] of Object.entries(ADAPTER_TYPE_MAP)) {
+    if (api === apiType) return def;
+  }
+  return apiType;
+}
+
 // ---------------------------------------------------------------------------
 // URL / UID parsing
 // ---------------------------------------------------------------------------
@@ -121,7 +150,30 @@ async function parseJson<T>(res: Response): Promise<T> {
       `HTTP ${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`,
     );
   }
-  return (await res.json()) as T;
+  const body = (await res.json()) as T;
+  return body;
+}
+
+/**
+ * Unwrap the ModelWorks API envelope.
+ *
+ * The API wraps all responses in `{ status, status_code, payload }`.
+ * This extracts the `payload` field (the actual data) and throws if
+ * the envelope reports an error.
+ */
+function unwrap<T>(body: unknown): T {
+  if (body && typeof body === "object" && "payload" in body) {
+    const envelope = body as {
+      status: string;
+      status_code: number;
+      payload: T;
+    };
+    if (envelope.status === "error") {
+      throw new Error(`API error: ${JSON.stringify(envelope)}`);
+    }
+    return envelope.payload;
+  }
+  return body as T;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,9 +186,7 @@ export async function getCircuit(
   circuitUid: string,
 ): Promise<CircuitPublic> {
   const res = await authedFetch(apiBase, `/api/circuits/${circuitUid}`);
-  const body = await parseJson<{ data: CircuitPublic } | CircuitPublic>(res);
-  // The API wraps single-resource responses in `{ data: ... }`.
-  return "data" in body ? body.data : body;
+  return unwrap<CircuitPublic>(await parseJson(res));
 }
 
 /**
@@ -156,8 +206,7 @@ export async function resolveRunningVersion(
   // its parent circuit UID.
   if (!circuitUid && ref.version_uid) {
     const vRes = await authedFetch(apiBase, `/api/circuit-versions/${ref.version_uid}`);
-    const vBody = await parseJson<{ data: CircuitVersionPublic } | CircuitVersionPublic>(vRes);
-    const version = "data" in vBody ? vBody.data : vBody;
+    const version = unwrap<CircuitVersionPublic>(await parseJson(vRes));
     circuitUid = version.circuit_uid;
     const circuit = await getCircuit(apiBase, circuitUid);
     return { circuit, version };
@@ -171,37 +220,21 @@ export async function resolveRunningVersion(
 
   if (ref.version_uid) {
     const vRes = await authedFetch(apiBase, `/api/circuit-versions/${ref.version_uid}`);
-    const vBody = await parseJson<{ data: CircuitVersionPublic } | CircuitVersionPublic>(vRes);
-    const version = "data" in vBody ? vBody.data : vBody;
+    const version = unwrap<CircuitVersionPublic>(await parseJson(vRes));
     return { circuit, version };
   }
 
-  // No version specified — list and pick the latest RUNNING.
-  const versions = await listVersions(apiBase, circuitUid);
-  const running = versions.filter((v) => v.state.toUpperCase() === "RUNNING");
-  if (running.length === 0) {
+  // No version specified — get the primary (RUNNING) version directly.
+  const res = await authedFetch(apiBase, `/api/circuits/${circuitUid}/primary`);
+  const version = unwrap<CircuitVersionPublic | null>(await parseJson(res));
+
+  if (!version) {
     throw new Error(
-      `Circuit ${circuitUid} has no RUNNING version. Publish or promote a version first.`,
+      `Circuit ${circuitUid} has no primary (RUNNING) version. Publish or promote a version first.`,
     );
   }
-  // Latest by `updated_at` (ISO string sorts lexicographically).
-  running.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-  return { circuit, version: running[0] };
-}
 
-/**
- * List a circuit's versions (`GET /circuits/<uid>/versions`).
- *
- * **To verify during impl:** the exact REST path. This assumes
- * `/circuits/<uid>/versions`; if it differs, only this function changes.
- */
-export async function listVersions(
-  apiBase: string,
-  circuitUid: string,
-): Promise<CircuitVersionPublic[]> {
-  const res = await authedFetch(apiBase, `/api/circuits/${circuitUid}/versions`);
-  const body = await parseJson<{ data: CircuitVersionPublic[] } | CircuitVersionPublic[]>(res);
-  return "data" in body ? body.data : body;
+  return { circuit, version };
 }
 
 // ---------------------------------------------------------------------------
@@ -217,8 +250,7 @@ export async function listAdaptors(
     apiBase,
     `/api/circuit-adaptors/by-circuit-version/${versionUid}`,
   );
-  const body = await parseJson<{ data: CircuitAdaptorPublic[] } | CircuitAdaptorPublic[]>(res);
-  return "data" in body ? body.data : body;
+  return unwrap<CircuitAdaptorPublic[]>(await parseJson(res));
 }
 
 /**
@@ -230,12 +262,15 @@ export async function listAdaptors(
  * Fallback (protected, non-owner — no `json_blob`): list existing
  * adaptors and read their `adapter_type` values.
  *
- * Returns an empty array if neither source yields adapter types.
+ * Returns `{ adapters, determined }` where `determined` is false when
+ * neither source yielded adapter types (no `json_blob` and no existing
+ * adaptors). In that case the caller should assume SSE-compatible and
+ * let runtime validation be the safety net.
  */
 export async function discoverAdapters(
   version: CircuitVersionPublic,
   apiBase: string,
-): Promise<string[]> {
+): Promise<{ adapters: string[]; determined: boolean }> {
   // Primary: json_blob's `adapters` array.
   if (version.json_blob) {
     try {
@@ -243,16 +278,18 @@ export async function discoverAdapters(
         adapters?: Array<{ type: string }>;
       };
       if (Array.isArray(def.adapters)) {
-        return def.adapters.map((a) => a.type);
+        return { adapters: def.adapters.map((a) => a.type), determined: true };
       }
     } catch {
       // Fall through to the list-based fallback.
     }
   }
 
-  // Fallback: list existing adaptors.
+  // Fallback: list existing adaptors (API returns PascalCase enum values;
+  // normalize to circuit-definition format for consistency).
   const adaptors = await listAdaptors(apiBase, version.uid);
-  return adaptors.map((a) => a.adapter_type);
+  const adapters = adaptors.map((a) => fromApiAdapterType(a.adapter_type));
+  return { adapters, determined: adapters.length > 0 };
 }
 
 /** Is `OPEN_AI_SSE` in the list of supported adapters? */
@@ -265,36 +302,49 @@ export function isSseCompatible(adapters: string[]): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Find an existing `OPEN_AI_SSE` adaptor owned by the caller, or create one.
+ * Find an existing `OpenAiSse` adaptor owned by the caller, or create one.
  *
  * Returns the adaptor UID (`ca-xxx`), or `null` if the circuit isn't
  * SSE-compatible.
+ *
+ * If `determined` is false (couldn't read `json_blob` and no existing
+ * adaptors to infer from), try creating an SSE adaptor anyway —
+ * `can_create_circuit_adaptor` doesn't validate `adapter_type`, so
+ * creation always succeeds. Runtime validation (`validate_openai_query`)
+ * is the safety net for circuits that don't actually support SSE.
+ *
+ * Note: the `adapters` parameter uses circuit-definition format
+ * (`"OPEN_AI_SSE"`), but the API uses PascalCase (`"OpenAiSse"`).
  */
 export async function ensureSseAdaptor(
   apiBase: string,
   versionUid: string,
   adapters: string[],
+  determined: boolean,
 ): Promise<string | null> {
-  if (!isSseCompatible(adapters)) return null;
+  // If we could determine adapters and SSE isn't supported, skip.
+  if (determined && !isSseCompatible(adapters)) return null;
 
+  // If undetermined, try anyway — creation succeeds, runtime validates.
+
+  const apiAdapterType = toApiAdapterType(OPEN_AI_SSE);
   const existing = await listAdaptors(apiBase, versionUid);
   const found = existing.find(
-    (a) => a.adapter_type === OPEN_AI_SSE,
+    (a) => a.adapter_type === apiAdapterType,
   );
   if (found) return found.uid;
 
   // Create a new temporal SSE adaptor.
   const body: CreateCircuitAdaptorBody = {
     circuit_version_uid: versionUid,
-    adapter_type: OPEN_AI_SSE,
+    adapter_type: apiAdapterType,
   };
   const res = await authedFetch(apiBase, "/api/circuit-adaptors", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  const created = await parseJson<{ data: CircuitAdaptorPublic } | CircuitAdaptorPublic>(res);
-  const adaptor = "data" in created ? created.data : created;
+  const adaptor = unwrap<CircuitAdaptorPublic>(await parseJson(res));
   return adaptor.uid;
 }
 
@@ -335,8 +385,14 @@ export interface AddResult {
 export async function addCircuit(input: string, apiBase: string): Promise<AddResult> {
   const ref = parseCircuitRef(input);
   const { circuit, version } = await resolveRunningVersion(apiBase, ref);
-  const adapters = await discoverAdapters(version, apiBase);
-  const sse_adaptor_uid = await ensureSseAdaptor(apiBase, version.uid, adapters);
+  const { adapters, determined } = await discoverAdapters(version, apiBase);
+  const sse_adaptor_uid = await ensureSseAdaptor(apiBase, version.uid, adapters, determined);
+
+  // If we created an SSE adaptor despite not being able to determine
+  // adapters, mark SSE-compatible in state (unverified).
+  const effectiveAdapters = determined
+    ? adapters
+    : (sse_adaptor_uid ? [OPEN_AI_SSE, ...adapters] : adapters);
 
   // Config entry (committable).
   const now = new Date().toISOString();
@@ -352,7 +408,7 @@ export async function addCircuit(input: string, apiBase: string): Promise<AddRes
     circuit_uid: circuit.uid,
     version_uid: version.uid,
     circuit_name: circuit.name,
-    adapters,
+    adapters: effectiveAdapters,
     sse_adaptor_uid,
     resolved_at: now,
   };
@@ -374,7 +430,7 @@ export async function addCircuit(input: string, apiBase: string): Promise<AddRes
     circuit_uid: circuit.uid,
     version_uid: version.uid,
     name: circuit.name,
-    adapters,
+    adapters: effectiveAdapters,
     sse_adaptor_uid,
     sse_compatible: sse_adaptor_uid !== null,
     added: !already,

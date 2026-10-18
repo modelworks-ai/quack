@@ -345,9 +345,20 @@ export async function login(apiBaseOverride?: string): Promise<LoginResult> {
     role: string;
   };
 
-  // Decode the user_uid from the JWT access token (sub claim) without verifying.
-  // Falls back to `token_uid` if the JWT isn't decodable.
-  const user_uid = decodeJwtSub(tokenBody.access_token) ?? tokenBody.token_uid;
+  // The token response has `token_uid` (the `ut-` UID) but NOT the
+  // user's `usr-` UID. Fetch it from `/users/token`.
+  const userRes = await fetch(`${apiBase}/api/users/token`, {
+    headers: { authorization: `Bearer ${tokenBody.access_token}` },
+  });
+  let user_uid = "";
+  if (userRes.ok) {
+    const userBody = await userRes.json();
+    const payload = (userBody as { payload?: { uid?: string } }).payload ?? userBody;
+    user_uid = (payload as { uid?: string }).uid ?? "";
+  }
+  if (!user_uid) {
+    throw new Error("Could not determine user UID after login.");
+  }
 
   const creds: Credentials = {
     access_token: tokenBody.access_token,
@@ -422,17 +433,8 @@ function waitForCallback(expectedState: string): Promise<{ code: string }> {
 }
 
 /** Decode the `sub` claim from a JWT without verifying the signature. */
-function decodeJwtSub(jwt: string): string | null {
-  try {
-    const parts = jwt.split(".");
-    if (parts.length < 2) return null;
-    const payload = Buffer.from(parts[1], "base64url").toString("utf8");
-    const json = JSON.parse(payload) as { sub?: string };
-    return json.sub ?? null;
-  } catch {
-    return null;
-  }
-}
+// Removed — the ModelWorks access token is opaque (`mw_...`), not a JWT.
+// The user UID is fetched from `/users/token` after the token exchange instead.
 
 // ---------------------------------------------------------------------------
 // `quack logout`

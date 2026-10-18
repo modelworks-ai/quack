@@ -70,9 +70,14 @@ async function cmdWhoami(): Promise<void> {
     console.log("Not logged in. Run `quack login` first.");
     process.exit(1);
   }
-  console.log(`User: ${creds.user_uid}`);
-  console.log(`API:  ${creds.api_base}`);
-  console.log(`Role: ${creds.token_type}`);
+  console.log(`User:  ${creds.user_uid}`);
+  console.log(`API:   ${creds.api_base}`);
+  const now = Math.floor(Date.now() / 1000);
+  const remaining = creds.expires_at - now;
+  const expiry = remaining > 0
+    ? `${Math.floor(remaining / 60)}m remaining`
+    : "expired (will refresh on next use)";
+  console.log(`Token: ${expiry}`);
 }
 
 async function cmdAdd(args: string[]): Promise<void> {
