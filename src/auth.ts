@@ -395,6 +395,7 @@ function waitForCallback(expectedState: string): Promise<{ code: string }> {
       if (error) {
         res.writeHead(400, { "content-type": "text/html" });
         res.end(`<h1>Login failed</h1><p>${error}</p>`);
+        clearTimeout(timer);
         server.close();
         reject(new Error(`OAuth error: ${error}`));
         return;
@@ -403,6 +404,7 @@ function waitForCallback(expectedState: string): Promise<{ code: string }> {
       if (!code || state !== expectedState) {
         res.writeHead(400, { "content-type": "text/html" });
         res.end("<h1>Login failed</h1><p>Missing or mismatched state.</p>");
+        clearTimeout(timer);
         server.close();
         reject(new Error("OAuth callback: missing code or state mismatch"));
         return;
@@ -412,6 +414,7 @@ function waitForCallback(expectedState: string): Promise<{ code: string }> {
       res.end(
         "<h1>Logged in to quack</h1><p>You can close this tab and return to your terminal.</p>",
       );
+      clearTimeout(timer);
       server.close();
       resolve({ code });
     });
@@ -421,11 +424,12 @@ function waitForCallback(expectedState: string): Promise<{ code: string }> {
     });
 
     server.on("error", (err) => {
+      clearTimeout(timer);
       reject(new Error(`Callback server failed: ${err.message}`));
     });
 
     // Timeout after 5 minutes.
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       server.close();
       reject(new Error("Login timed out after 5 minutes"));
     }, 5 * 60 * 1000);
