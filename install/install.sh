@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 #
-# quack installer — git-like authenticated circuit launcher for ModelWorks.
+# quack installer — bash bootstrap phase.
+#
+# This script does the minimum needed to get Node running, then hands off
+# to the Node installer (dist/install.js inside the npm tarball) which
+# handles the actual install with spinners, progress, and PATH config.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/modelworks-ai/quack/main/install/install.sh | bash
@@ -13,19 +17,15 @@
 # Environment:
 #   NONINTERACTIVE=1          Skip confirmation prompt
 #   CI=1                      Implies NONINTERACTIVE
-#   QUACK_NODE_VERSION        Override the bundled Node version (default: 22.19.0)
+#   QUACK_NODE_VERSION        Override bundled Node version (default: 22.19.0)
 #
 set -euo pipefail
 
 APP=quack
 PACKAGE_NAME="@modelworks/quack"
 INSTALL_DIR="$HOME/.quack"
-BIN_DIR="$INSTALL_DIR/bin"
-DIST_DIR="$INSTALL_DIR/dist"
 NODE_DIR="$INSTALL_DIR/node"
 
-# Bundled Node version — bumped periodically. Only downloaded when system
-# Node is missing or too old.
 BUNDLED_NODE_VERSION="${QUACK_NODE_VERSION:-22.19.0}"
 
 # Terminal colors (disabled when not a TTY).
@@ -33,16 +33,11 @@ if [ -t 1 ]; then
   MUTED='\033[0;2m'
   RED='\033[0;31m'
   ORANGE='\033[38;5;214m'
-  GREEN='\033[0;32m'
   BOLD='\033[1m'
   NC='\033[0m'
 else
-  MUTED='' RED='' ORANGE='' GREEN='' BOLD='' NC=''
+  MUTED='' RED='' ORANGE='' BOLD='' NC=''
 fi
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 abort() {
   printf "${RED}Error: %s${NC}\n" "$*" >&2
@@ -70,7 +65,7 @@ shell_join() {
   done
 }
 
-# Retry a command with exponential backoff (Homebrew pattern).
+# Retry with exponential backoff (Homebrew pattern).
 retry() {
   local tries="$1" n="$1" pause=2
   shift
@@ -160,13 +155,11 @@ command -v tar >/dev/null 2>&1 || abort "'tar' is required but not installed."
 # Node detection — system Node or bundled fallback
 # ---------------------------------------------------------------------------
 
-# Returns the Node major version, or 0 if node is missing/unparseable.
 node_major_version() {
   local node_bin="$1"
-  [ -x "$node_bin" ] || return 0
+  [ -x "$node_bin" ] || echo 0
   local ver
   ver="$("$node_bin" --version 2>/dev/null || echo "")"
-  # Expected: "v22.19.0" → 22
   ver="${ver#v}"
   echo "${ver%%.*}"
 }
@@ -174,13 +167,13 @@ node_major_version() {
 REQUIRED_NODE_MAJOR=18
 SYSTEM_NODE=""
 SYSTEM_NODE_MAJOR=0
+BUNDLED_NODE_FLAG=""
 
 if command -v node >/dev/null 2>&1; then
   SYSTEM_NODE="$(command -v node)"
   SYSTEM_NODE_MAJOR="$(node_major_version "$SYSTEM_NODE")"
 fi
 
-BUNDLED_NODE=""
 USE_NODE=""
 
 if [ "$SYSTEM_NODE_MAJOR" -ge "$REQUIRED_NODE_MAJOR" ]; then
@@ -193,7 +186,7 @@ else
     info "Node not found on system."
   fi
 
-  # Check if a previously-bundled Node exists from a prior install.
+  # Check for previously-bundled Node.
   BUNDLED_NODE_BIN="$NODE_DIR/node"
   if [ -x "$BUNDLED_NODE_BIN" ]; then
     BUNDLED_NODE_MAJOR="$(node_major_version "$BUNDLED_NODE_BIN")"
@@ -203,11 +196,10 @@ else
     fi
   fi
 
-  # If still no usable Node, download the bundled version.
+  # Download bundled Node if still needed.
   if [ -z "$USE_NODE" ]; then
     ohai "Downloading bundled Node ${BUNDLED_NODE_VERSION}..."
 
-    # Platform detection (same logic as OpenCode).
     raw_os="$(uname -s)"
     os="$(echo "$raw_os" | tr '[:upper:]' '[:lower:]')"
     case "$raw_os" in
@@ -250,9 +242,9 @@ else
     chmod 755 "$NODE_DIR/node"
     rm -rf "$tmp_node_dir"
 
-    BUNDLED_NODE="$NODE_DIR/node"
-    USE_NODE="$BUNDLED_NODE"
-    info "Bundled Node installed: $("$BUNDLED_NODE" --version)"
+    USE_NODE="$NODE_DIR/node"
+    BUNDLED_NODE_FLAG="--bundled-node"
+    info "Bundled Node installed: $("$USE_NODE" --version)"
   fi
 fi
 
@@ -278,12 +270,11 @@ fi
 if [ -z "${NONINTERACTIVE-}" ]; then
   printf "\n"
   ohai "This script will install:"
-  echo "  ${BIN_DIR}/quack"
-  echo "  ${DIST_DIR}/"
-  [ -n "$BUNDLED_NODE" ] && echo "  ${NODE_DIR}/node (bundled)"
+  echo "  ${INSTALL_DIR}/bin/quack"
+  echo "  ${INSTALL_DIR}/dist/"
+  [ -n "$BUNDLED_NODE_FLAG" ] && echo "  ${NODE_DIR}/node (bundled)"
   printf "\n"
   printf "Press ${BOLD}RETURN${NC}/${BOLD}ENTER${NC} to continue or any other key to abort:\n"
-  # Read a single character.
   if [ -t 0 ]; then
     save_state="$(stty -g 2>/dev/null || true)"
     stty raw -echo 2>/dev/null || true
@@ -328,7 +319,7 @@ download_with_progress() {
   fi
 
   local headers="${output}.headers"
-  printf "\033[?25l" >&4  # hide cursor
+  printf "\033[?25l" >&4
   trap 'trap - RETURN; rm -f "$headers"; printf "\033[?25h" >&4; exec 4>&-' RETURN
 
   curl -fsL -D "$headers" -o "$output" "$url" &
@@ -355,10 +346,10 @@ download_with_progress() {
 }
 
 # ---------------------------------------------------------------------------
-# Download & install quack
+# Download & extract the npm tarball
 # ---------------------------------------------------------------------------
 
-ohai "Installing ${APP} ${specific_version}..."
+ohai "Downloading ${APP} ${specific_version}..."
 
 tmp_dir="${TMPDIR:-/tmp}/quack_install_$$"
 mkdir -p "$tmp_dir"
@@ -367,143 +358,19 @@ trap 'rm -rf "$tmp_dir"' EXIT
 filename="quack-${specific_version}.tgz"
 
 if ! download_with_progress "$tarball_url" "$tmp_dir/$filename"; then
-  # Fallback for non-TTY or if custom progress fails.
   curl -f -# -L -o "$tmp_dir/$filename" "$tarball_url"
 fi
 
 tar -xzf "$tmp_dir/$filename" -C "$tmp_dir"
 
-# npm tarball structure: package/dist/bin.js, package/dist/*.js, etc.
-mkdir -p "$INSTALL_DIR"
-rm -rf "$DIST_DIR"
-cp -R "$tmp_dir/package/dist" "$DIST_DIR"
-
 # ---------------------------------------------------------------------------
-# Create wrapper script
+# Hand off to the Node installer
 # ---------------------------------------------------------------------------
 
-mkdir -p "$BIN_DIR"
+# Build args for the Node installer.
+node_installer_args="--version $specific_version"
+[ "$no_modify_path" = "true" ] && node_installer_args="$node_installer_args --no-modify-path"
+[ -n "$BUNDLED_NODE_FLAG" ] && node_installer_args="$node_installer_args $BUNDLED_NODE_FLAG"
 
-cat > "$BIN_DIR/quack" << 'WRAPPER'
-#!/bin/sh
-# quack wrapper — resolves Node (system or bundled) and launches quack.
-set -e
-
-SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
-QUACK_HOME="$(cd "$SELF_DIR/.." && pwd)"
-
-# Prefer system Node if it's new enough.
-if command -v node >/dev/null 2>&1; then
-  NODE_BIN="node"
-elif [ -x "$QUACK_HOME/node/node" ]; then
-  NODE_BIN="$QUACK_HOME/node/node"
-else
-  echo "quack: Node 18+ not found. Reinstall:" >&2
-  echo "  curl -fsSL https://raw.githubusercontent.com/modelworks-ai/quack/main/install/install.sh | bash" >&2
-  exit 1
-fi
-
-exec "$NODE_BIN" "$QUACK_HOME/dist/bin.js" "$@"
-WRAPPER
-
-chmod 755 "$BIN_DIR/quack"
-
-# ---------------------------------------------------------------------------
-# PATH management (OpenCode pattern)
-# ---------------------------------------------------------------------------
-
-add_to_path() {
-  local config_file="$1" command="$2"
-
-  if grep -Fxq "$command" "$config_file" 2>/dev/null; then
-    info "PATH entry already in $config_file, skipping."
-  elif [ -w "$config_file" ]; then
-    printf "\n# quack\n" >> "$config_file"
-    printf "%s\n" "$command" >> "$config_file"
-    info "Added quack to PATH in $config_file"
-  else
-    warn "Could not write to $config_file. Manually add:"
-    info "  $command"
-  fi
-}
-
-if [ "$no_modify_path" != "true" ]; then
-  XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
-  current_shell="$(basename "$SHELL")"
-
-  case "$current_shell" in
-    fish)
-      config_files="$HOME/.config/fish/config.fish"
-      path_command="fish_add_path $BIN_DIR"
-      ;;
-    zsh)
-      config_files="${ZDOTDIR:-$HOME}/.zshrc ${ZDOTDIR:-$HOME}/.zshenv $XDG_CONFIG_HOME/zsh/.zshrc $XDG_CONFIG_HOME/zsh/.zshenv"
-      path_command="export PATH=\"$BIN_DIR:\$PATH\""
-      ;;
-    bash)
-      config_files="$HOME/.bashrc $HOME/.bash_profile $HOME/.profile $XDG_CONFIG_HOME/bash/.bashrc $XDG_CONFIG_HOME/bash/.bash_profile"
-      path_command="export PATH=\"$BIN_DIR:\$PATH\""
-      ;;
-    ash|sh)
-      config_files="$HOME/.ashrc $HOME/.profile /etc/profile"
-      path_command="export PATH=\"$BIN_DIR:\$PATH\""
-      ;;
-    *)
-      config_files="$HOME/.bashrc $HOME/.bash_profile $XDG_CONFIG_HOME/bash/.bashrc $XDG_CONFIG_HOME/bash/.bash_profile"
-      path_command="export PATH=\"$BIN_DIR:\$PATH\""
-      ;;
-  esac
-
-  config_file=""
-  for file in $config_files; do
-    [ -f "$file" ] && config_file="$file" && break
-  done
-
-  if [ -z "$config_file" ]; then
-    warn "No shell config found for $current_shell. Manually add to PATH:"
-    info "  $path_command"
-  elif [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
-    add_to_path "$config_file" "$path_command"
-  else
-    info "$BIN_DIR is already on PATH."
-  fi
-fi
-
-# ---------------------------------------------------------------------------
-# GitHub Actions support
-# ---------------------------------------------------------------------------
-
-if [ -n "${GITHUB_ACTIONS-}" ] && [ "$GITHUB_ACTIONS" = "true" ]; then
-  echo "$BIN_DIR" >> "$GITHUB_PATH"
-  info "Added $BIN_DIR to \$GITHUB_PATH"
-fi
-
-# ---------------------------------------------------------------------------
-# Success banner
-# ---------------------------------------------------------------------------
-
-printf "\n"
-printf "  ${GREEN}${BOLD}╔══════════════════════════════════════╗${NC}\n"
-printf "  ${GREEN}${BOLD}║          quack installed! 🦆           ║${NC}\n"
-printf "  ${GREEN}${BOLD}╚══════════════════════════════════════╝${NC}\n"
-printf "\n"
-printf "  ${MUTED}Version:${NC} ${specific_version}\n"
-printf "  ${MUTED}Location:${NC} ${BIN_DIR}/quack\n"
-[ -n "$BUNDLED_NODE" ] && printf "  ${MUTED}Node:${NC} bundled v${BUNDLED_NODE_VERSION}\n"
-printf "\n"
-printf "  ${BOLD}Next steps:${NC}\n"
-printf "    quack login                              ${MUTED}# Authenticate via OAuth${NC}\n"
-printf "    cd <project> && quack init               ${MUTED}# Initialize a project${NC}\n"
-printf "    quack add <circuit-url>                  ${MUTED}# Add a circuit${NC}\n"
-printf "    quack opencode                           ${MUTED}# Launch OpenCode${NC}\n"
-printf "\n"
-if [ "$no_modify_path" != "true" ]; then
-  printf "  ${MUTED}Open a new terminal or run:${NC}\n"
-  printf "  ${MUTED}  source ~/${current_shell:+.${current_shell}rc}  ${MUTED}# or restart your shell${NC}\n"
-  printf "  ${MUTED}to use quack.${NC}\n"
-else
-  printf "  ${MUTED}Add to PATH: export PATH=\"$BIN_DIR:\$PATH\"${NC}\n"
-fi
-printf "\n"
-printf "  ${MUTED}Docs: https://github.com/modelworks-ai/quack${NC}\n"
-printf "\n"
+# The extracted tarball has: package/dist/install.js
+exec "$USE_NODE" "$tmp_dir/package/dist/install.js" $node_installer_args
