@@ -141,11 +141,19 @@ async function cmdRm(args: string[]): Promise<void> {
   console.log(`Removed circuit '${result.name}' (${result.circuit_uid}).`);
 }
 
-async function cmdLs(): Promise<void> {
+// ANSI colors for status indicators.
+const GREEN = "\x1b[32m";
+const RED = "\x1b[31m";
+const YELLOW = "\x1b[33m";
+const DIM = "\x1b[2m";
+const RESET = "\x1b[0m";
+
+async function cmdLs(args: string[]): Promise<void> {
   if (!isQuackProject()) {
     console.error("Not a quack project. Run `quack init` first.");
     process.exit(1);
   }
+  const long = args.includes("-l") || args.includes("--long");
   const config = readConfig();
   const state = readState();
 
@@ -154,22 +162,92 @@ async function cmdLs(): Promise<void> {
     return;
   }
 
+  // Build rows from config + state.
+  interface Row {
+    name: string;
+    sse: string;       // colored ✓ or ✗ or ~
+    adapters: string;  // comma-joined
+    circuitUid: string;
+    versionUid: string;
+    adaptorUid: string;
+    synced: boolean;
+  }
+
+  const rows: Row[] = [];
   for (const entry of config.circuits) {
     const s = state.circuits[entry.circuit_uid];
     if (!s) {
-      console.log(
-        `${entry.circuit_uid}  ${entry.name.padEnd(28)}  —        ✗ not synced (run \`quack opencode\` or \`quack refresh\`)`,
-      );
+      rows.push({
+        name: entry.name,
+        sse: `${RED}✗${RESET}`,
+        adapters: `${DIM}not synced (run \`quack refresh\`)${RESET}`,
+        circuitUid: entry.circuit_uid,
+        versionUid: "—",
+        adaptorUid: "—",
+        synced: false,
+      });
       continue;
     }
-    const sse = s.adapters.includes("OPEN_AI_SSE") && s.sse_adaptor_uid;
-    const sseMark = sse ? "✓ SSE" : "✗ no SSE";
-    const adapters = `[${s.adapters.join(", ")}]`;
-    const adaptorUid = s.sse_adaptor_uid ? `(${s.sse_adaptor_uid})` : "";
-    console.log(
-      `${s.circuit_uid}  ${s.circuit_name.padEnd(28)}  ${s.version_uid}   ${sseMark}  ${adapters}  ${adaptorUid}`,
-    );
+    const sseOk = s.adapters.includes("OPEN_AI_SSE") && s.sse_adaptor_uid;
+    const sseMark = sseOk
+      ? `${GREEN}✓${RESET}`
+      : s.adapters.includes("OPEN_AI_SSE")
+        ? `${YELLOW}~${RESET}`
+        : `${RED}✗${RESET}`;
+    const adapters = s.adapters.length > 0
+      ? s.adapters.join(", ")
+      : "none";
+    rows.push({
+      name: entry.name,
+      sse: sseMark,
+      adapters,
+      circuitUid: s.circuit_uid,
+      versionUid: s.version_uid,
+      adaptorUid: s.sse_adaptor_uid ?? "—",
+      synced: true,
+    });
   }
+
+  // Compute column widths (using the length of the plain text, ignoring ANSI).
+  const col = (header: string, rows: Row[], field: keyof Row): number =>
+    Math.max(header.length, ...rows.map((r) => stripAnsi(String(r[field])).length));
+
+  const wName = col("NAME", rows, "name");
+  const wSse = col("SSE", rows, "sse");
+  const wAdapters = col("ADAPTERS", rows, "adapters");
+
+  // Default columns: NAME, SSE, ADAPTERS
+  // Header
+  console.log(
+    `${"NAME".padEnd(wName)}  ${"SSE".padEnd(wSse)}  ${"ADAPTERS"}`,
+  );
+  console.log(`${"─".repeat(wName)}  ${"─".repeat(wSse)}  ${"─".repeat(Math.max("ADAPTERS".length, ...rows.map((r) => stripAnsi(r.adapters).length)))}`);
+
+  for (const r of rows) {
+    if (long) {
+      const wCircuit = col("CIRCUIT UID", rows, "circuitUid");
+      const wVersion = col("VERSION UID", rows, "versionUid");
+      const wAdaptor = col("ADAPTOR UID", rows, "adaptorUid");
+      console.log(
+        `${r.name.padEnd(wName)}  ${stripAnsi(r.sse).padEnd(wSse)}  ${r.adapters}  ${DIM}${r.circuitUid.padEnd(wCircuit)}${RESET}  ${DIM}${r.versionUid.padEnd(wVersion)}${RESET}  ${DIM}${r.adaptorUid}${RESET}`,
+      );
+    } else {
+      console.log(
+        `${r.name.padEnd(wName)}  ${stripAnsi(r.sse).padEnd(wSse)}  ${r.adapters}`,
+      );
+    }
+  }
+
+  if (long) {
+    console.log("");
+    console.log(`${GREEN}✓${RESET} SSE-compatible   ${YELLOW}~${RESET} SSE adapter missing   ${RED}✗${RESET} no SSE   ${DIM}UIDs shown with --long${RESET}`);
+  }
+}
+
+/** Strip ANSI escape codes to measure the visible text length. */
+function stripAnsi(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
 async function cmdRefresh(args: string[]): Promise<void> {
@@ -464,7 +542,7 @@ async function main(): Promise<void> {
         await cmdRm(rest);
         break;
       case "ls":
-        await cmdLs();
+        await cmdLs(rest);
         break;
       case "refresh":
         await cmdRefresh(rest);
