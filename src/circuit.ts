@@ -204,6 +204,16 @@ export async function getCircuit(
   return unwrap<CircuitPublic>(await parseJson(res));
 }
 
+/** Fetch a user's username by UID (`GET /users/<uid>`). */
+export async function getUsername(
+  apiBase: string,
+  userUid: string,
+): Promise<string> {
+  const res = await authedFetch(apiBase, `/api/users/${userUid}`);
+  const payload = await parseJson<{ username?: string }>(res);
+  return unwrap<{ username?: string }>(payload).username ?? "unknown";
+}
+
 /**
  * Resolve a circuit reference to a RUNNING version.
  *
@@ -421,6 +431,9 @@ export async function addCircuit(input: string, apiBase: string): Promise<AddRes
     ? adapters
     : (sse_adaptor_uid ? [OPEN_AI_SSE, ...adapters] : adapters);
 
+  // Fetch the circuit owner's username for display (`<username>/<circuit_name>`).
+  const owner_username = await getUsername(apiBase, circuit.user_uid);
+
   // Config entry (committable).
   const now = new Date().toISOString();
   const configEntry: CircuitConfigEntry = {
@@ -435,6 +448,7 @@ export async function addCircuit(input: string, apiBase: string): Promise<AddRes
     circuit_uid: circuit.uid,
     version_uid: version.uid,
     circuit_name: circuit.name,
+    owner_username,
     adapters: effectiveAdapters,
     sse_adaptor_uid,
     adaptor_uids,

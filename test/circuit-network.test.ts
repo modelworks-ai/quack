@@ -50,6 +50,12 @@ const SSE_CIRCUIT_RESPONSES = {
       },
     },
   },
+  "GET /api/users/usr-test": {
+    json: {
+      status: "success",
+      payload: { username: "alice" },
+    },
+  },
 };
 
 /** Adaptor list (empty — first add). */
@@ -213,6 +219,7 @@ test("removeCircuit: deletes adaptor and removes from config/state", async () =>
             circuit_uid: "c-test",
             version_uid: "cv-test",
             circuit_name: "Test Circuit",
+        owner_username: "alice",
             adapters: ["OPEN_AI_SSE"],
             sse_adaptor_uid: "ca-test",
   adaptor_uids: { OPEN_AI_SSE: "ca-test" },
@@ -275,6 +282,7 @@ test("removeCircuit: --keep-adaptors skips server-side deletion", async () => {
             circuit_uid: "c-test",
             version_uid: "cv-test",
             circuit_name: "Test Circuit",
+        owner_username: "alice",
             adapters: ["OPEN_AI_SSE"],
             sse_adaptor_uid: "ca-test",
   adaptor_uids: { OPEN_AI_SSE: "ca-test" },
@@ -394,6 +402,7 @@ test("ensureState: no-op when state is already synced", async () => {
             circuit_uid: "c-test",
             version_uid: "cv-test",
             circuit_name: "Test Circuit",
+        owner_username: "alice",
             adapters: ["OPEN_AI_SSE"],
             sse_adaptor_uid: "ca-existing",
         adaptor_uids: { OPEN_AI_SSE: "ca-existing" },
@@ -458,6 +467,12 @@ test("ensureState: skips circuits that return 403 (no access)", async () => {
         json: {
           status: "success",
           payload: { uid: "c-public", name: "Public Circuit", user_uid: "usr-other" },
+        },
+      },
+      "GET /api/users/usr-other": {
+        json: {
+          status: "success",
+          payload: { username: "bob" },
         },
       },
       "GET /api/circuits/c-public/primary": {

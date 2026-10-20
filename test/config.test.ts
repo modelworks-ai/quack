@@ -44,6 +44,7 @@ test("buildOpenCodeConfig: injects SSE-compatible circuit as provider", () => {
         circuit_uid: "c-abc",
         version_uid: "cv-abc",
         circuit_name: "Test Circuit",
+        owner_username: "alice",
         adapters: ["OPEN_AI_SSE"],
         sse_adaptor_uid: "ca-xxx",
         adaptor_uids: { OPEN_AI_SSE: "ca-xxx" },
@@ -62,7 +63,7 @@ test("buildOpenCodeConfig: injects SSE-compatible circuit as provider", () => {
   );
   assert.equal(provider!.options.apiKey, "quack");
   assert.ok(provider!.models?.["c-abc"], "model entry missing");
-  assert.equal(provider!.models!["c-abc"].name, "Test Circuit");
+  assert.equal(provider!.models!["c-abc"].name, "alice/Test Circuit");
 });
 
 test("buildOpenCodeConfig: skips non-SSE circuits", () => {
@@ -72,6 +73,7 @@ test("buildOpenCodeConfig: skips non-SSE circuits", () => {
         circuit_uid: "c-abc",
         version_uid: "cv-abc",
         circuit_name: "Non-SSE Circuit",
+        owner_username: "alice",
         adapters: ["MCP"],
         sse_adaptor_uid: null,
         adaptor_uids: {},
@@ -90,6 +92,7 @@ test("buildOpenCodeConfig: skips SSE circuit with null adaptor UID", () => {
         circuit_uid: "c-abc",
         version_uid: "cv-abc",
         circuit_name: "SSE But No Adaptor",
+        owner_username: "alice",
         adapters: ["OPEN_AI_SSE"],
         sse_adaptor_uid: null,
         adaptor_uids: {},
@@ -108,6 +111,7 @@ test("buildOpenCodeConfig: injects multiple SSE circuits", () => {
         circuit_uid: "c-aaa",
         version_uid: "cv-aaa",
         circuit_name: "Circuit A",
+        owner_username: "alice",
         adapters: ["OPEN_AI_SSE"],
         sse_adaptor_uid: "ca-aaa",
         adaptor_uids: { OPEN_AI_SSE: "ca-aaa" },
@@ -117,6 +121,7 @@ test("buildOpenCodeConfig: injects multiple SSE circuits", () => {
         circuit_uid: "c-bbb",
         version_uid: "cv-bbb",
         circuit_name: "Circuit B",
+        owner_username: "alice",
         adapters: ["OPEN_AI_SSE", "MCP"],
         sse_adaptor_uid: "ca-bbb",
         adaptor_uids: { OPEN_AI_SSE: "ca-bbb" },
@@ -143,6 +148,7 @@ test("buildOpenCodeConfig: no secrets in the output", () => {
         circuit_uid: "c-abc",
         version_uid: "cv-abc",
         circuit_name: "Test",
+        owner_username: "alice",
         adapters: ["OPEN_AI_SSE"],
         sse_adaptor_uid: "ca-xxx",
         adaptor_uids: { OPEN_AI_SSE: "ca-xxx" },
@@ -178,6 +184,7 @@ test("summarizeInjection: injected vs skipped", () => {
         circuit_uid: "c-sse",
         version_uid: "cv-sse",
         circuit_name: "SSE Circuit",
+        owner_username: "alice",
         adapters: ["OPEN_AI_SSE"],
         sse_adaptor_uid: "ca-sse",
         adaptor_uids: { OPEN_AI_SSE: "ca-sse" },
@@ -187,6 +194,7 @@ test("summarizeInjection: injected vs skipped", () => {
         circuit_uid: "c-nosse",
         version_uid: "cv-nosse",
         circuit_name: "No SSE Circuit",
+        owner_username: "alice",
         adapters: ["MCP"],
         sse_adaptor_uid: null,
         adaptor_uids: {},
@@ -196,6 +204,7 @@ test("summarizeInjection: injected vs skipped", () => {
         circuit_uid: "c-sse-nouid",
         version_uid: "cv-sse-nouid",
         circuit_name: "SSE No Adaptor",
+        owner_username: "alice",
         adapters: ["OPEN_AI_SSE"],
         sse_adaptor_uid: null,
         adaptor_uids: {},

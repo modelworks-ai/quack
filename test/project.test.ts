@@ -206,6 +206,7 @@ const sampleState: CircuitStateEntry = {
   circuit_uid: "c-test",
   version_uid: "cv-test",
   circuit_name: "Test Circuit",
+        owner_username: "alice",
   adapters: ["OPEN_AI_SSE"],
   sse_adaptor_uid: "ca-test",
   adaptor_uids: { OPEN_AI_SSE: "ca-test" },

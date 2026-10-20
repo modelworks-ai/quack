@@ -174,7 +174,7 @@ export function buildOpenCodeConfig(
         apiKey: "quack",
       },
       models: {
-        [entry.circuit_uid]: { name: entry.circuit_name },
+        [entry.circuit_uid]: { name: `${entry.owner_username}/${entry.circuit_name}` },
       },
     };
     config.provider![providerKey] = provider;

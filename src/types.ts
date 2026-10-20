@@ -58,6 +58,8 @@ export interface CircuitStateEntry {
   /** The RUNNING version resolved at add/refresh time. */
   version_uid: string;
   circuit_name: string;
+  /** Owner's username (e.g. `alice`), for display as `<username>/<circuit_name>`. */
+  owner_username: string;
   /**
    * Adapter types the circuit supports, e.g.
    * `["OPEN_AI_SSE", "MODELWORKS_HTTP", "MCP"]`.
