@@ -10,7 +10,14 @@ import { spawn, spawnSync } from "node:child_process";
 import { refreshToken } from "../auth.js";
 import { readState } from "../project.js";
 import { startProxy } from "../proxy.js";
-import type { ProxyHandle, QuackState, CircuitStateEntry } from "../types.js";
+import type {
+  ProxyHandle,
+  QuackState,
+  CircuitStateEntry,
+  OpenCodeConfig,
+  OpenCodeMcpServer,
+  OpenCodeProvider,
+} from "../types.js";
 import type { Agent, AgentContext, LaunchOptions, LaunchResult } from "./types.js";
 
 /** `npm` package for OpenAI-compatible providers. */
@@ -42,22 +49,8 @@ function isInjectableSseCircuit(entry: CircuitStateEntry): boolean {
   );
 }
 
-/** OpenCode config shape (subset of the full schema). */
-interface OpenCodeConfig {
-  $schema: string;
-  mcp: {
-    servers: Record<string, {
-      type: "remote";
-      url: string;
-      oauth: boolean;
-      protocol: "auto";
-    }>;
-  };
-  provider?: Record<string, unknown>;
-}
-
 /** Build the OpenCode config from project state. */
-function buildOpenCodeConfig(state: QuackState, port: number): OpenCodeConfig {
+export function buildOpenCodeConfig(state: QuackState, port: number): OpenCodeConfig {
   const proxyBase = `http://localhost:${port}`;
 
   const config: OpenCodeConfig = {
@@ -69,6 +62,12 @@ function buildOpenCodeConfig(state: QuackState, port: number): OpenCodeConfig {
           url: `${proxyBase}/api/x.mcp`,
           oauth: false,
           protocol: "auto",
+          // Dummy auth header — the proxy overrides it with the real
+          // Bearer token. Without this, OpenCode sees no auth config and
+          // prompts the user to authenticate ("MCP Authentication Required").
+          headers: {
+            Authorization: "Bearer quack",
+          },
         },
       },
     },
@@ -79,7 +78,7 @@ function buildOpenCodeConfig(state: QuackState, port: number): OpenCodeConfig {
     if (!isInjectableSseCircuit(entry)) continue;
 
     const providerKey = `circuit-${entry.circuit_uid}`;
-    (config.provider as Record<string, unknown>)[providerKey] = {
+    const provider: OpenCodeProvider = {
       npm: OPENAI_COMPATIBLE_NPM,
       name: entry.circuit_name,
       options: {
@@ -91,18 +90,19 @@ function buildOpenCodeConfig(state: QuackState, port: number): OpenCodeConfig {
         [entry.circuit_uid]: { name: entry.circuit_name },
       },
     };
+    config.provider![providerKey] = provider;
   }
 
   return config;
 }
 
 /** Describe the injection decision for `--print` output. */
-interface InjectionSummary {
+export interface InjectionSummary {
   injected: Array<{ circuit_uid: string; name: string; sse_adaptor_uid: string }>;
   skipped: Array<{ circuit_uid: string; name: string; reason: string }>;
 }
 
-function summarizeInjection(state: QuackState): InjectionSummary {
+export function summarizeInjection(state: QuackState): InjectionSummary {
   const injected: InjectionSummary["injected"] = [];
   const skipped: InjectionSummary["skipped"] = [];
 

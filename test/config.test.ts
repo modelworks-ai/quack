@@ -11,7 +11,7 @@ import { test } from "node:test";
 import {
   buildOpenCodeConfig,
   summarizeInjection,
-} from "../src/config.js";
+} from "../src/agents/opencode.js";
 import type { QuackState } from "../src/types.js";
 
 const PORT = 54321;
@@ -29,6 +29,12 @@ test("buildOpenCodeConfig: includes the global modelworks MCP server", () => {
   assert.equal(config.mcp!.servers!.modelworks.url, `${PROXY_BASE}/api/x.mcp`);
   assert.equal(config.mcp!.servers!.modelworks.oauth, false);
   assert.equal(config.mcp!.servers!.modelworks.protocol, "auto");
+  // Dummy auth header — the proxy overrides it with the real token.
+  assert.equal(
+    config.mcp!.servers!.modelworks.headers?.Authorization,
+    "Bearer quack",
+    "MCP server must have a dummy Authorization header to avoid OpenCode's auth prompt",
+  );
 });
 
 test("buildOpenCodeConfig: injects SSE-compatible circuit as provider", () => {
@@ -139,9 +145,20 @@ test("buildOpenCodeConfig: no secrets in the output", () => {
     },
   };
   const json = JSON.stringify(buildOpenCodeConfig(state, PORT));
-  // No access tokens or Bearer strings
-  assert.ok(!json.includes("Bearer"), "found Bearer in config");
-  assert.ok(!json.includes("mw_"), "found mw_ token in config");
+  // No real access tokens — only the dummy "Bearer quack" is allowed.
+  assert.ok(
+    !json.includes("mw_"),
+    "found mw_ token in config",
+  );
+  // The only Bearer string allowed is the dummy "Bearer quack".
+  const bearerMatches = json.match(/Bearer [^"]+/g) ?? [];
+  for (const m of bearerMatches) {
+    assert.equal(
+      m,
+      "Bearer quack",
+      `unexpected Bearer value in config: ${m}`,
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------

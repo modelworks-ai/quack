@@ -60,6 +60,13 @@ function effectiveApiBase(): string {
 
 async function cmdInit(args: string[]): Promise<void> {
   const force = args.includes("--force");
+  // Require login before init — a quack project is useless without
+  // credentials (can't add circuits, can't launch).
+  const creds = loadCredentials();
+  if (!creds) {
+    console.error("Not logged in. Run `quack login` first.");
+    process.exit(1);
+  }
   initProject(force);
 }
 
