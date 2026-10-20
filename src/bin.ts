@@ -80,7 +80,22 @@ async function cmdWhoami(): Promise<void> {
     console.log("Not logged in. Run `quack login` first.");
     process.exit(1);
   }
-  console.log(`User:  ${creds.user_uid}`);
+
+  // Fetch the username from the API for a friendlier display.
+  let username = creds.user_uid;
+  try {
+    const res = await fetch(`${creds.api_base}/api/users/token`, {
+      headers: { Authorization: `Bearer ${creds.access_token}` },
+    });
+    if (res.ok) {
+      const body = await res.json() as { payload?: { username?: string; name?: string } };
+      username = body.payload?.username ?? username;
+    }
+  } catch {
+    // Fall back to user_uid if the API is unreachable.
+  }
+
+  console.log(`User:  ${username}`);
   console.log(`API:   ${creds.api_base}`);
   const now = Math.floor(Date.now() / 1000);
   const remaining = creds.expires_at - now;
