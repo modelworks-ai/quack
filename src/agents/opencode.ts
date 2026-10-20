@@ -6,6 +6,9 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { refreshToken } from "../auth.js";
 import { readState } from "../project.js";
@@ -193,7 +196,7 @@ export const opencodeAgent: Agent = {
     if (opts.print) {
       console.log(`Proxy: http://localhost:${proxy.port} → ${ctx.apiBase}`);
       console.log("");
-      console.log("Injected OpenCode config (OPENCODE_CONFIG_CONTENT):");
+      console.log("Injected OpenCode config (OPENCODE_CONFIG):");
       console.log(configJson);
       console.log("");
       console.log(
@@ -212,12 +215,23 @@ export const opencodeAgent: Agent = {
       return { exitCode: null, proxyPort: proxy.port };
     }
 
-    // Spawn opencode with the config injected via env.
+    // Write the config to a temp file and point OPENCODE_CONFIG at it.
+    // V1's OPENCODE_CONFIG_CONTENT (inline JSON) works for simple top-level
+    // overrides like `model`, but doesn't reliably deep-merge `mcp.servers`.
+    // OPENCODE_CONFIG (file path, "custom-path" scope) is what the user's
+    // own wrapper uses for full configs with MCP servers.
+    const configFile = path.join(
+      os.tmpdir(),
+      `quack-opencode-config-${proxy.port}.json`,
+    );
+    fs.writeFileSync(configFile, configJson);
+
+    // Spawn opencode with the config file path injected via env.
     const child = spawn("opencode", opts.args, {
       stdio: "inherit",
       env: {
         ...process.env,
-        OPENCODE_CONFIG_CONTENT: configJson,
+        OPENCODE_CONFIG: configFile,
       },
     });
 
@@ -242,6 +256,13 @@ export const opencodeAgent: Agent = {
         resolve(1);
       });
     });
+
+    // Clean up the temp config file.
+    try {
+      fs.unlinkSync(configFile);
+    } catch {
+      // Ignore cleanup errors.
+    }
 
     proxy.close();
     return { exitCode, proxyPort: proxy.port };
