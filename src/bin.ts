@@ -7,12 +7,20 @@
 
 import { getApiBase, loadCredentials, login, logout } from "./auth.js";
 import { addCircuit, ensureState, refreshCircuits, removeCircuit } from "./circuit.js";
-import { listAgents, getAgent } from "./agents/registry.js";
+import {
+  listAgents,
+  getAgent,
+  isAgentAvailable,
+  listAvailableAgents,
+  resolveAgent,
+  isInteractive,
+} from "./agents/registry.js";
 import {
   initProject,
   isQuackProject,
   readConfig,
   readState,
+  writeState,
 } from "./project.js";
 
 const VERSION = "0.1.0";
@@ -23,6 +31,7 @@ function printHelp(): void {
 quack ${VERSION} — git-like authenticated circuit launcher for ModelWorks
 
 Usage:
+  quack                                   Launch the default agent (see below)
   quack init                              Create .quack/ in current directory
   quack add <circuit-url>                 Add a circuit (resolve + create SSE adaptor)
   quack rm <circuit-uid|url>              Remove a circuit
@@ -159,6 +168,123 @@ async function cmdRefresh(args: string[]): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Interactive picker
+// ---------------------------------------------------------------------------
+
+/** Prompt the user to pick from a list of agents. Returns the chosen agent. */
+async function pickAgentInteractive(): Promise<string | null> {
+  const available = listAvailableAgents();
+  if (available.length === 0) return null;
+
+  const readline = await import("node:readline/promises");
+  const { stdin, stdout } = process;
+  const rl = readline.createInterface({ input: stdin, output: stdout });
+
+  console.log("\nNo default agent set. Pick one:\n");
+  available.forEach((agent, i) => {
+    console.log(`  ${i + 1}) ${agent.name} — ${agent.description}`);
+  });
+  console.log("");
+
+  try {
+    const answer = await rl.question(`Pick an agent [1-${available.length}]: `);
+    const idx = parseInt(answer.trim(), 10) - 1;
+    if (isNaN(idx) || idx < 0 || idx >= available.length) {
+      console.error("Invalid selection.");
+      return null;
+    }
+    return available[idx].name;
+  } finally {
+    rl.close();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Bare `quack` — launch the default agent
+// ---------------------------------------------------------------------------
+
+async function cmdQuack(): Promise<void> {
+  if (!isQuackProject()) {
+    console.error("Not a quack project. Run `quack init` first.");
+    process.exit(1);
+  }
+
+  const creds = loadCredentials();
+  if (!creds) {
+    console.error("Not logged in. Run `quack login` first.");
+    process.exit(1);
+  }
+
+  const config = readConfig();
+  const state = readState();
+
+  // Resolve which agent to launch.
+  let agentName: string | undefined;
+  const result = resolveAgent(config.default_agent, state.last_agent);
+
+  if (result.ok) {
+    agentName = result.agent.name;
+  } else if (result.message === "__PROMPT__") {
+    // Interactive picker — multiple agents available, no default set.
+    if (!isInteractive()) {
+      console.error(
+        "No default agent set and multiple are installed. Set \"default_agent\" in .quack/config.json.",
+      );
+      process.exit(1);
+    }
+    const picked = await pickAgentInteractive();
+    if (!picked) {
+      process.exit(1);
+    }
+    agentName = picked;
+  } else {
+    console.error(result.message);
+    process.exit(1);
+  }
+
+  const agent = getAgent(agentName);
+  if (!agent) {
+    console.error(`Agent "${agentName}" not found.`);
+    process.exit(1);
+  }
+
+  // Auto-sync circuits (cloned repo case).
+  const apiBase = effectiveApiBase();
+  await ensureState(apiBase);
+
+  // Launch with no args.
+  const getAccessToken = () => {
+    const c = loadCredentials();
+    if (!c) {
+      throw new Error("Not logged in. Run `quack login` first.");
+    }
+    return c.access_token;
+  };
+
+  const freshState = readState();
+  const ctx = {
+    proxyPort: 0,
+    apiBase,
+    getAccessToken,
+    state: freshState,
+  };
+
+  const launchResult = await agent.launch(ctx, {
+    args: [],
+    verbose: false,
+    print: false,
+  });
+
+  // Save the last-used agent.
+  if (launchResult.exitCode !== null) {
+    const s = readState();
+    s.last_agent = agentName;
+    writeState(s);
+    process.exit(launchResult.exitCode);
+  }
+}
+
 async function cmdAgent(agentName: string, args: string[]): Promise<void> {
   const agent = getAgent(agentName);
   if (!agent) {
@@ -225,9 +351,14 @@ async function cmdAgents(args: string[]): Promise<void> {
 
   if (!sub || sub === "list") {
     const agents = listAgents();
+    const config = isQuackProject() ? readConfig() : null;
+    const defaultAgent = config?.default_agent;
+
     console.log("Available agents:\n");
     for (const agent of agents) {
-      console.log(`  ${agent.name.padEnd(12)} ${agent.description}`);
+      const installed = isAgentAvailable(agent) ? "✓ installed" : "✗ not installed";
+      const isDefault = defaultAgent === agent.name ? "  default" : "";
+      console.log(`  ${agent.name.padEnd(12)} ${installed.padEnd(18)}${isDefault}  ${agent.description}`);
     }
     console.log(
       "\nThese agents are built into quack. New agents appear automatically\nwhen you update quack.",
@@ -280,12 +411,17 @@ async function main(): Promise<void> {
 
   const [cmd, ...rest] = filtered;
 
-  if (!cmd || cmd === "--help" || cmd === "-h") {
+  if (cmd === "--help" || cmd === "-h") {
     printHelp();
     return;
   }
   if (cmd === "--version" || cmd === "-v") {
     console.log(VERSION);
+    return;
+  }
+  if (!cmd) {
+    // Bare `quack` — launch the default agent.
+    await cmdQuack();
     return;
   }
 

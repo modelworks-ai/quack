@@ -81,6 +81,12 @@ export interface CircuitStateEntry {
  */
 export interface QuackConfig {
   version: number;
+  /**
+   * Agent to launch when the user runs bare `quack` (no args).
+   * Optional — if absent, the fallback chain (last_agent →
+   * interactive pick → error) resolves the agent.
+   */
+  default_agent?: string;
   circuits: CircuitConfigEntry[];
 }
 
@@ -89,6 +95,12 @@ export interface QuackConfig {
  */
 export interface QuackState {
   circuits: Record<string, CircuitStateEntry>;
+  /**
+   * The last agent successfully launched by bare `quack`.
+   * Per-user convenience — used as a fallback when
+   * `default_agent` is not set in config.json.
+   */
+  last_agent?: string;
 }
 
 /**

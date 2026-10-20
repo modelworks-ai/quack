@@ -44,9 +44,9 @@ export function requireQuackProject(): void {
   }
 }
 
-/** Empty config template. */
+/** Empty config template. `default_agent` defaults to `opencode`. */
 function emptyConfig(): QuackConfig {
-  return { version: 1, circuits: [] };
+  return { version: 1, default_agent: "opencode", circuits: [] };
 }
 
 /** Empty state template. */
