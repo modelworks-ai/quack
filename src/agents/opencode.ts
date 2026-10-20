@@ -213,11 +213,7 @@ export const opencodeAgent: Agent = {
     }
 
     // Spawn opencode with the config injected via env.
-    // --standalone runs a private server (not the shared background service)
-    // so OPENCODE_CONFIG_CONTENT is picked up fresh every launch, and MCP
-    // server configs point at this run's proxy port — not a stale one from
-    // a previous session's background service.
-    const child = spawn("opencode", ["--standalone", ...opts.args], {
+    const child = spawn("opencode", opts.args, {
       stdio: "inherit",
       env: {
         ...process.env,
