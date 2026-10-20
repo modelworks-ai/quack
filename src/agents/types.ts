@@ -9,7 +9,7 @@
  * @module
  */
 
-import type { QuackState } from "../types.js";
+import type { QuackConfig, QuackState } from "../types.js";
 
 /** Options passed to {@link Agent.buildConfig} and {@link Agent.launch}. */
 export interface AgentContext {
@@ -21,6 +21,8 @@ export interface AgentContext {
   getAccessToken: () => string;
   /** The project's cached state (circuits, adaptors, versions). */
   state: QuackState;
+  /** The project's committable config (default_agent, default_circuit, circuits). */
+  config: QuackConfig;
 }
 
 /** Options for {@link Agent.launch}. */

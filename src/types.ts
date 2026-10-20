@@ -94,6 +94,13 @@ export interface QuackConfig {
    * interactive pick → error) resolves the agent.
    */
   default_agent?: string;
+  /**
+   * Circuit UID (`c-xxx`) to use as the default model in OpenCode.
+   * Team-shared — committed to `config.json`. Set via `quack circuit use`
+   * or auto-set to the first SSE-compatible circuit on `quack circuit add`.
+   * At launch, resolved to an OpenCode model ID and injected as `model`.
+   */
+  default_circuit?: string;
   circuits: CircuitConfigEntry[];
 }
 
@@ -194,6 +201,8 @@ export interface ProxyOptions {
  */
 export interface OpenCodeConfig {
   $schema?: string;
+  /** Default model ID, e.g. `circuit-wandb-glm-52/wandb-glm-52`. */
+  model?: string;
   mcp?: {
     servers: Record<string, OpenCodeMcpServer>;
   };

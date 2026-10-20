@@ -11,10 +11,11 @@ import os from "node:os";
 import path from "node:path";
 
 import { refreshToken } from "../auth.js";
-import { readState } from "../project.js";
+import { readState, readConfig } from "../project.js";
 import { startProxy } from "../proxy.js";
 import type {
   ProxyHandle,
+  QuackConfig,
   QuackState,
   CircuitStateEntry,
   OpenCodeConfig,
@@ -76,8 +77,60 @@ function isInjectableSseCircuit(entry: CircuitStateEntry): boolean {
   );
 }
 
+/**
+ * Resolve which circuit to use as the default OpenCode model.
+ *
+ * Resolution order:
+ * 1. `config.default_circuit` if it's SSE-compatible and injected
+ * 2. First injectable SSE circuit in state (fallback, not persisted)
+ * 3. `null` — no default model injected
+ *
+ * Prints a warning to stderr if `default_circuit` is stale (not in the
+ * circuits array) or not SSE-compatible.
+ *
+ * @returns the OpenCode model ID (`circuit-<uid>/<uid>`) or `null`.
+ */
+export function resolveDefaultModel(
+  config: QuackConfig,
+  state: QuackState,
+): string | null {
+  const injectedCircuits = Object.values(state.circuits).filter(
+    isInjectableSseCircuit,
+  );
+  if (injectedCircuits.length === 0) return null;
+
+  const configured = config.default_circuit;
+  if (configured) {
+    // Check the circuit exists in the config's circuits array.
+    const inConfig = config.circuits.some(
+      (c) => c.circuit_uid === configured,
+    );
+    if (!inConfig) {
+      console.error(
+        `⚠ default_circuit '${configured}' not found in circuits — using ${injectedCircuits[0].circuit_name} as default`,
+      );
+    } else {
+      const entry = state.circuits[configured];
+      if (entry && isInjectableSseCircuit(entry)) {
+        return `circuit-${configured}/${configured}`;
+      }
+      console.error(
+        `⚠ default_circuit '${configured}' is not SSE-compatible — using ${injectedCircuits[0].circuit_name} as default`,
+      );
+    }
+  }
+
+  // Fallback: first injectable SSE circuit.
+  const first = injectedCircuits[0];
+  return `circuit-${first.circuit_uid}/${first.circuit_uid}`;
+}
+
 /** Build the OpenCode config from project state. */
-export function buildOpenCodeConfig(state: QuackState, port: number): OpenCodeConfig {
+export function buildOpenCodeConfig(
+  state: QuackState,
+  port: number,
+  defaultModel?: string | null,
+): OpenCodeConfig {
   const proxyBase = `http://localhost:${port}`;
 
   const config: OpenCodeConfig = {
@@ -103,6 +156,10 @@ export function buildOpenCodeConfig(state: QuackState, port: number): OpenCodeCo
     },
     provider: {},
   };
+
+  if (defaultModel) {
+    config.model = defaultModel;
+  }
 
   for (const entry of Object.values(state.circuits)) {
     if (!isInjectableSseCircuit(entry)) continue;
@@ -180,7 +237,8 @@ export const opencodeAgent: Agent = {
   installHints: OPENCODE_INSTALL.map((m) => `${m.label}: ${m.cmd}`),
 
   buildConfig(ctx: AgentContext): Record<string, string> {
-    const config = buildOpenCodeConfig(ctx.state, ctx.proxyPort);
+    const defaultModel = resolveDefaultModel(ctx.config, ctx.state);
+    const config = buildOpenCodeConfig(ctx.state, ctx.proxyPort, defaultModel);
     return {
       OPENCODE_CONFIG: JSON.stringify(config, null, 2),
     };
@@ -214,8 +272,10 @@ export const opencodeAgent: Agent = {
 
     // Build the config.
     const state = readState();
-    const config = buildOpenCodeConfig(state, proxy.port);
-    const configJson = JSON.stringify(config, null, 2);
+    const config = readConfig();
+    const defaultModel = resolveDefaultModel(config, state);
+    const openCodeConfig = buildOpenCodeConfig(state, proxy.port, defaultModel);
+    const configJson = JSON.stringify(openCodeConfig, null, 2);
     const summary = summarizeInjection(state);
 
     if (opts.print) {

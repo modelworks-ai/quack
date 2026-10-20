@@ -20,8 +20,10 @@ import {
 import {
   initProject,
   isQuackProject,
+  requireQuackProject,
   readConfig,
   readState,
+  writeConfig,
   writeState,
 } from "./project.js";
 
@@ -79,6 +81,19 @@ async function cmdCircuitList(opts: { long?: boolean }): Promise<void> {
     return;
   }
 
+  // Warn if default_circuit is stale (not in the circuits array).
+  if (config.default_circuit) {
+    const inConfig = config.circuits.some(
+      (c) => c.circuit_uid === config.default_circuit,
+    );
+    if (!inConfig) {
+      const firstCircuit = config.circuits[0];
+      console.error(
+        `⚠ default_circuit '${config.default_circuit}' not found in circuits — using ${firstCircuit.name} as default`,
+      );
+    }
+  }
+
   // Build all rows: first row per circuit carries name/SSE/version/circuit UID;
   // adapter rows carry the adapter type + adaptor UID.
   interface Row {
@@ -92,10 +107,12 @@ async function cmdCircuitList(opts: { long?: boolean }): Promise<void> {
 
   const rows: Row[] = [];
   for (const entry of config.circuits) {
+    const isDefault = config.default_circuit === entry.circuit_uid;
+    const displayName = isDefault ? `${entry.name} *` : entry.name;
     const s = state.circuits[entry.circuit_uid];
     if (!s) {
       rows.push({
-        name: entry.name,
+        name: displayName,
         sse: `${RED}✗${RESET}`,
         adapter: `${DIM}not synced (run \`quack refresh\`)${RESET}`,
         adaptorUid: "",
@@ -118,7 +135,7 @@ async function cmdCircuitList(opts: { long?: boolean }): Promise<void> {
       ? (s.adaptor_uids?.[s.adapters[0]] ?? "—")
       : "";
     rows.push({
-      name: entry.name,
+      name: displayName,
       sse: sseMark,
       adapter: firstAdapter,
       adaptorUid: firstAdaptorUid,
@@ -189,12 +206,55 @@ async function cmdCircuitAdd(url: string): Promise<void> {
       `Added circuit '${result.name}' (no SSE). Adapters: ${adapterList}. Will not be injected by \`quack opencode\`.`,
     );
   }
+
+  // Auto-set default_circuit if this is SSE-compatible and no default is set.
+  if (result.sse_compatible && result.added) {
+    const config = readConfig();
+    if (!config.default_circuit) {
+      config.default_circuit = result.circuit_uid;
+      writeConfig(config);
+      console.log(`Set as default circuit (use \`quack circuit use <uid>\` to change).`);
+    }
+  }
 }
 
 async function cmdCircuitRemove(ref: string, opts: { keepAdaptors?: boolean }): Promise<void> {
   const apiBase = effectiveApiBase();
   const result = await removeCircuit(ref, apiBase, opts.keepAdaptors ?? false);
   console.log(`Removed circuit '${result.name}' (${result.circuit_uid}).`);
+
+  // Clear default_circuit if it pointed to the removed circuit.
+  const config = readConfig();
+  if (config.default_circuit === result.circuit_uid) {
+    config.default_circuit = undefined;
+    writeConfig(config);
+    console.log(`Cleared default circuit.`);
+  }
+}
+
+/** `quack circuit use <uid>` — set the default circuit. */
+function cmdCircuitUse(uid: string): void {
+  requireQuackProject();
+  const config = readConfig();
+  const entry = config.circuits.find((c) => c.circuit_uid === uid);
+  if (!entry) {
+    console.error(`Circuit ${uid} is not in this project.`);
+    console.error("Run `quack circuit list` to see available circuits.");
+    process.exit(1);
+  }
+
+  config.default_circuit = uid;
+  writeConfig(config);
+
+  // Check SSE compatibility from state.
+  const state = readState();
+  const s = state.circuits[uid];
+  if (s && !s.adapters.includes("OPEN_AI_SSE")) {
+    console.log(`Set default circuit to '${entry.name}'.`);
+    console.log(`⚠ not SSE-compatible — won't appear as a model in OpenCode.`);
+  } else {
+    console.log(`Set default circuit to '${entry.name}'.`);
+  }
 }
 
 async function cmdCircuitRefresh(uid?: string): Promise<void> {
@@ -224,6 +284,7 @@ async function cmdCircuitDescribe(uid: string): Promise<void> {
 
   console.log(`Name:        ${entry.name}`);
   console.log(`Circuit UID: ${uid}`);
+  console.log(`Default:     ${config.default_circuit === uid ? "yes" : "no"}`);
   if (s) {
     console.log(`Version UID: ${s.version_uid}`);
     const sseOk = s.adapters.includes("OPEN_AI_SSE") && s.sse_adaptor_uid;
@@ -425,11 +486,13 @@ async function cmdQuack(): Promise<void> {
   };
 
   const freshState = readState();
+  const freshConfig = readConfig();
   const ctx = {
     proxyPort: 0,
     apiBase,
     getAccessToken,
     state: freshState,
+    config: freshConfig,
   };
 
   const launchResult = await agent.launch(ctx, {
@@ -482,12 +545,14 @@ async function cmdAgentLaunch(agentName: string, args: string[], opts: { print?:
   };
 
   const state = readState();
+  const config = readConfig();
 
   const ctx = {
     proxyPort: 0,
     apiBase,
     getAccessToken,
     state,
+    config,
   };
 
   const result = await agent.launch(ctx, {
@@ -570,6 +635,14 @@ function buildCli(): Command {
     .action(async (uid) => {
       requireAuth();
       await cmdCircuitDescribe(uid);
+    });
+
+  circuit
+    .command("use <uid>")
+    .description("Set the default circuit (used as the default model in OpenCode)")
+    .action(async (uid: string) => {
+      requireAuth();
+      cmdCircuitUse(uid);
     });
 
   // agent group
