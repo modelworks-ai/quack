@@ -112,18 +112,23 @@ async function cmdCircuitList(opts: { long?: boolean }): Promise<void> {
         ? `${YELLOW}~${RESET}`
         : `${RED}✗${RESET}`;
 
-    // First row: circuit summary.
+    // First row: circuit summary + first adapter (if any).
+    const firstAdapter = s.adapters.length > 0 ? s.adapters[0] : "";
+    const firstAdaptorUid = s.adapters.length > 0
+      ? (s.adaptor_uids?.[s.adapters[0]] ?? "—")
+      : "";
     rows.push({
       name: entry.name,
       sse: sseMark,
-      adapter: "",
-      adaptorUid: "",
+      adapter: firstAdapter,
+      adaptorUid: firstAdaptorUid,
       versionUid: s.version_uid,
       circuitUid: s.circuit_uid,
     });
 
-    // Adapter rows.
-    for (const adapter of s.adapters) {
+    // Remaining adapter rows.
+    for (let i = 1; i < s.adapters.length; i++) {
+      const adapter = s.adapters[i];
       const uid = s.adaptor_uids?.[adapter] ?? "—";
       rows.push({
         name: "",
