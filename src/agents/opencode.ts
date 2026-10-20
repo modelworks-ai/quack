@@ -23,6 +23,9 @@ import type {
 } from "../types.js";
 import type { Agent, AgentContext, LaunchOptions, LaunchResult } from "./types.js";
 
+/** Quack version (kept in sync with package.json). */
+const AGENT_VERSION = "0.1.0";
+
 /** `npm` package for OpenAI-compatible providers. */
 const OPENAI_COMPATIBLE_NPM = "@ai-sdk/openai-compatible";
 
@@ -220,9 +223,12 @@ export const opencodeAgent: Agent = {
     // overrides like `model`, but doesn't reliably deep-merge `mcp.servers`.
     // OPENCODE_CONFIG (file path, "custom-path" scope) is what the user's
     // own wrapper uses for full configs with MCP servers.
+    //
+    // The filename includes the quack version + timestamp to avoid any
+    // config caching by file path.
     const configFile = path.join(
       os.tmpdir(),
-      `quack-opencode-config-${proxy.port}.json`,
+      `quack-opencode-config-v${AGENT_VERSION}-${Date.now()}-${proxy.port}.json`,
     );
     fs.writeFileSync(configFile, configJson);
 
