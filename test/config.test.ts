@@ -24,14 +24,14 @@ const PROXY_BASE = `http://localhost:${PORT}`;
 test("buildOpenCodeConfig: includes the global modelworks MCP server", () => {
   const state: QuackState = { circuits: {} };
   const config = buildOpenCodeConfig(state, PORT);
-  assert.ok(config.mcp?.servers?.modelworks, "modelworks MCP server missing");
-  assert.equal(config.mcp!.servers!.modelworks.type, "remote");
-  assert.equal(config.mcp!.servers!.modelworks.url, `${PROXY_BASE}/api/x.mcp`);
-  assert.equal(config.mcp!.servers!.modelworks.oauth, false);
-  assert.equal(config.mcp!.servers!.modelworks.protocol, "auto");
+  assert.ok(config.mcp?.servers?.["ModelWorks x.MCP"], "ModelWorks x.MCP server missing");
+  assert.equal(config.mcp!.servers!["ModelWorks x.MCP"].type, "remote");
+  assert.equal(config.mcp!.servers!["ModelWorks x.MCP"].url, `${PROXY_BASE}/api/x.mcp`);
+  assert.equal(config.mcp!.servers!["ModelWorks x.MCP"].oauth, false);
+  assert.equal(config.mcp!.servers!["ModelWorks x.MCP"].protocol, "auto");
   // Dummy auth header — the proxy overrides it with the real token.
   assert.equal(
-    config.mcp!.servers!.modelworks.headers?.Authorization,
+    config.mcp!.servers!["ModelWorks x.MCP"].headers?.Authorization,
     "Bearer quack",
     "MCP server must have a dummy Authorization header to avoid OpenCode's auth prompt",
   );
@@ -127,7 +127,7 @@ test("buildOpenCodeConfig: injects multiple SSE circuits", () => {
 test("buildOpenCodeConfig: empty state has MCP server but no providers", () => {
   const state: QuackState = { circuits: {} };
   const config = buildOpenCodeConfig(state, PORT);
-  assert.ok(config.mcp?.servers?.modelworks);
+  assert.ok(config.mcp?.servers?.["ModelWorks x.MCP"]);
   assert.deepEqual(config.provider, {});
 });
 

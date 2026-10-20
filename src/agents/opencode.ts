@@ -57,7 +57,7 @@ export function buildOpenCodeConfig(state: QuackState, port: number): OpenCodeCo
     $schema: "https://opencode.ai/config.json",
     mcp: {
       servers: {
-        modelworks: {
+        "ModelWorks x.MCP": {
           type: "remote",
           url: `${proxyBase}/api/x.mcp`,
           oauth: false,
