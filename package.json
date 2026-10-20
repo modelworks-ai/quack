@@ -17,8 +17,8 @@
     "test:run": "node --test dist-test/test/*.test.js"
   },
   "devDependencies": {
-    "typescript": "^5.5.0",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.20.5",
+    "typescript": "^5.5.0"
   },
   "files": [
     "dist"
@@ -34,5 +34,8 @@
   "homepage": "https://github.com/modelworks-ai/quack",
   "bugs": {
     "url": "https://github.com/modelworks-ai/quack/issues"
+  },
+  "dependencies": {
+    "commander": "^15.0.0"
   }
 }

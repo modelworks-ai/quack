@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 /**
- * quack — git-like authenticated circuit launcher for ModelWorks.
+ * quack — Launch AI coding agents with ModelWorks circuits.
  *
  * @module
  */
+
+import { Command } from "commander";
 
 import { getApiBase, loadCredentials, login, logout } from "./auth.js";
 import { addCircuit, ensureState, refreshCircuits, removeCircuit } from "./circuit.js";
@@ -25,122 +27,6 @@ import {
 
 const VERSION = "0.2.0";
 
-/** Print usage. */
-function printHelp(): void {
-  console.log(`
-quack ${VERSION} — git-like authenticated circuit launcher for ModelWorks
-
-Usage:
-  quack                                   Launch the default agent (see below)
-  quack init                              Create .quack/ in current directory
-  quack add <circuit-url>                 Add a circuit (resolve + create SSE adaptor)
-  quack rm <circuit-uid|url>              Remove a circuit
-  quack ls                                List configured circuits
-  quack refresh [circuit-uid]             Re-resolve versions and rediscover adaptors
-  quack opencode [args]                   Start proxy + launch opencode (SSE circuits only)
-  quack opencode --print                  Show injected config, don't launch
-  quack opencode --verbose                Launch with proxy request logging
-  quack agents                            List available agents
-  quack login                             OAuth flow → store credentials
-  quack logout                            Revoke + delete credentials
-  quack whoami                            Show current user
-  quack --help | -h                       Show this help
-  quack --version | -v                    Show version
-`);
-}
-
-/** Resolve the effective API base from env or stored credentials. */
-function effectiveApiBase(): string {
-  return getApiBase(loadCredentials());
-}
-
-// ---------------------------------------------------------------------------
-// Command handlers
-// ---------------------------------------------------------------------------
-
-async function cmdInit(args: string[]): Promise<void> {
-  const force = args.includes("--force");
-  initProject(force);
-}
-
-async function cmdLogin(args: string[]): Promise<void> {
-  const apiBaseArg = flagValue(args, "--api-base");
-  const result = await login(apiBaseOverride(apiBaseArg));
-  console.log(`Logged in as user ${result.user_uid} (role: ${result.role}).`);
-}
-
-async function cmdLogout(): Promise<void> {
-  await logout();
-  console.log("Logged out.");
-}
-
-async function cmdWhoami(): Promise<void> {
-  const creds = loadCredentials();
-  if (!creds) {
-    console.log("Not logged in. Run `quack login` first.");
-    process.exit(1);
-  }
-
-  // Fetch the username from the API for a friendlier display.
-  let username = creds.user_uid;
-  try {
-    const res = await fetch(`${creds.api_base}/api/users/token`, {
-      headers: { Authorization: `Bearer ${creds.access_token}` },
-    });
-    if (res.ok) {
-      const body = await res.json() as { payload?: { username?: string; name?: string } };
-      username = body.payload?.username ?? username;
-    }
-  } catch {
-    // Fall back to user_uid if the API is unreachable.
-  }
-
-  console.log(`User:  ${username}`);
-  console.log(`UID:   ${creds.user_uid}`);
-  console.log(`API:   ${creds.api_base}`);
-  const now = Math.floor(Date.now() / 1000);
-  const remaining = creds.expires_at - now;
-  const expiry = remaining > 0
-    ? `${Math.floor(remaining / 60)}m remaining`
-    : "expired (will refresh on next use)";
-  console.log(`Token: ${expiry}`);
-}
-
-async function cmdAdd(args: string[]): Promise<void> {
-  const url = args[0];
-  if (!url) {
-    console.error("Usage: quack add <circuit-url>");
-    process.exit(1);
-  }
-  const apiBase = effectiveApiBase();
-  const result = await addCircuit(url, apiBase);
-  const adapterList = result.adapters.join(", ") || "(none)";
-  if (!result.added) {
-    console.log(`Circuit already added — refreshed state.`);
-  }
-  if (result.sse_compatible) {
-    console.log(
-      `Added circuit '${result.name}' (SSE). Adapters: ${adapterList}.`,
-    );
-  } else {
-    console.log(
-      `Added circuit '${result.name}' (no SSE). Adapters: ${adapterList}. Will not be injected by \`quack opencode\`.`,
-    );
-  }
-}
-
-async function cmdRm(args: string[]): Promise<void> {
-  const ref = args[0];
-  if (!ref) {
-    console.error("Usage: quack rm <circuit-uid|url>");
-    process.exit(1);
-  }
-  const keepAdaptors = args.includes("--keep-adaptors");
-  const apiBase = effectiveApiBase();
-  const result = await removeCircuit(ref, apiBase, keepAdaptors);
-  console.log(`Removed circuit '${result.name}' (${result.circuit_uid}).`);
-}
-
 // ANSI colors for status indicators.
 const GREEN = "\x1b[32m";
 const RED = "\x1b[31m";
@@ -154,17 +40,42 @@ function stripAnsi(s: string): string {
   return s.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
-async function cmdLs(args: string[]): Promise<void> {
+/** Resolve the effective API base from env or stored credentials. */
+function effectiveApiBase(): string {
+  return getApiBase(loadCredentials());
+}
+
+/** Force-login guard — exit if not authenticated. */
+function requireAuth(): void {
+  if (!loadCredentials()) {
+    console.error("Not logged in. Run `quack auth login` first.");
+    process.exit(1);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// init
+// ---------------------------------------------------------------------------
+
+async function cmdInit(opts: { force?: boolean }): Promise<void> {
+  initProject(opts.force ?? false);
+}
+
+// ---------------------------------------------------------------------------
+// circuit commands
+// ---------------------------------------------------------------------------
+
+async function cmdCircuitList(opts: { long?: boolean }): Promise<void> {
   if (!isQuackProject()) {
     console.error("Not a quack project. Run `quack init` first.");
     process.exit(1);
   }
-  const long = args.includes("-l") || args.includes("--long");
+  const long = opts.long ?? false;
   const config = readConfig();
   const state = readState();
 
   if (config.circuits.length === 0) {
-    console.log("No circuits. Run `quack add <circuit-url>` to add one.");
+    console.log("No circuits. Run `quack circuit add <circuit-url>` to add one.");
     return;
   }
 
@@ -172,8 +83,8 @@ async function cmdLs(args: string[]): Promise<void> {
   // adapter rows carry the adapter type + adaptor UID.
   interface Row {
     name: string;
-    sse: string;       // colored ✓ or ✗ or ~ or "" for adapter rows
-    adapter: string;   // "" for circuit row
+    sse: string; // colored ✓ or ✗ or ~ or "" for adapter rows
+    adapter: string; // "" for circuit row
     adaptorUid: string;
     versionUid: string;
     circuitUid: string;
@@ -257,15 +168,166 @@ async function cmdLs(args: string[]): Promise<void> {
   }
 }
 
-async function cmdRefresh(args: string[]): Promise<void> {
-  const circuitUid = args[0];
+async function cmdCircuitAdd(url: string): Promise<void> {
   const apiBase = effectiveApiBase();
-  const results = await refreshCircuits(apiBase, circuitUid);
+  const result = await addCircuit(url, apiBase);
+  const adapterList = result.adapters.join(", ") || "(none)";
+  if (!result.added) {
+    console.log(`Circuit already added — refreshed state.`);
+  }
+  if (result.sse_compatible) {
+    console.log(
+      `Added circuit '${result.name}' (SSE). Adapters: ${adapterList}.`,
+    );
+  } else {
+    console.log(
+      `Added circuit '${result.name}' (no SSE). Adapters: ${adapterList}. Will not be injected by \`quack opencode\`.`,
+    );
+  }
+}
+
+async function cmdCircuitRemove(ref: string, opts: { keepAdaptors?: boolean }): Promise<void> {
+  const apiBase = effectiveApiBase();
+  const result = await removeCircuit(ref, apiBase, opts.keepAdaptors ?? false);
+  console.log(`Removed circuit '${result.name}' (${result.circuit_uid}).`);
+}
+
+async function cmdCircuitRefresh(uid?: string): Promise<void> {
+  const apiBase = effectiveApiBase();
+  const results = await refreshCircuits(apiBase, uid);
   for (const r of results) {
     const sse = r.sse_compatible ? "SSE" : "no SSE";
     console.log(
       `Refreshed '${r.name}' (${r.circuit_uid}) → ${r.version_uid} [${sse}]`,
     );
+  }
+}
+
+async function cmdCircuitDescribe(uid: string): Promise<void> {
+  if (!isQuackProject()) {
+    console.error("Not a quack project. Run `quack init` first.");
+    process.exit(1);
+  }
+  const config = readConfig();
+  const state = readState();
+  const entry = config.circuits.find((c) => c.circuit_uid === uid);
+  if (!entry) {
+    console.error(`Circuit ${uid} is not in this project.`);
+    process.exit(1);
+  }
+  const s = state.circuits[uid];
+
+  console.log(`Name:        ${entry.name}`);
+  console.log(`Circuit UID: ${uid}`);
+  if (s) {
+    console.log(`Version UID: ${s.version_uid}`);
+    const sseOk = s.adapters.includes("OPEN_AI_SSE") && s.sse_adaptor_uid;
+    const sseStatus = sseOk
+      ? `${GREEN}✓${RESET} compatible`
+      : s.adapters.includes("OPEN_AI_SSE")
+        ? `${YELLOW}~${RESET} adapter missing`
+        : `${RED}✗${RESET} not compatible`;
+    console.log(`SSE:         ${sseStatus}`);
+    console.log();
+    console.log(`Adapters:`);
+    for (const adapter of s.adapters) {
+      const adaptorUid = s.adaptor_uids?.[adapter] ?? "—";
+      console.log(`  ${adapter.padEnd(18)} ${DIM}${adaptorUid}${RESET}`);
+    }
+    console.log();
+    console.log(`Added:       ${entry.added_at}`);
+    console.log(`Last sync:   ${s.resolved_at}`);
+  } else {
+    console.log(`SSE:         ${RED}✗${RESET} not synced`);
+    console.log();
+    console.log(`Run \`quack circuit refresh ${uid}\` to sync.`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// auth commands
+// ---------------------------------------------------------------------------
+
+async function cmdAuthLogin(apiBase?: string): Promise<void> {
+  const result = await login(apiBase);
+  console.log(`Logged in as user ${result.user_uid} (role: ${result.role}).`);
+}
+
+async function cmdAuthLogout(): Promise<void> {
+  await logout();
+  console.log("Logged out.");
+}
+
+async function cmdAuthStatus(): Promise<void> {
+  const creds = loadCredentials();
+  if (!creds) {
+    console.log("Not logged in. Run `quack auth login` first.");
+    process.exit(1);
+  }
+
+  // Fetch the username from the API for a friendlier display.
+  let username = creds.user_uid;
+  try {
+    const res = await fetch(`${creds.api_base}/api/users/token`, {
+      headers: { Authorization: `Bearer ${creds.access_token}` },
+    });
+    if (res.ok) {
+      const body = await res.json() as { payload?: { username?: string; name?: string } };
+      username = body.payload?.username ?? username;
+    }
+  } catch {
+    // Fall back to user_uid if the API is unreachable.
+  }
+
+  console.log(`User:  ${username}`);
+  console.log(`UID:   ${creds.user_uid}`);
+  console.log(`API:   ${creds.api_base}`);
+  const now = Math.floor(Date.now() / 1000);
+  const remaining = creds.expires_at - now;
+  const expiry = remaining > 0
+    ? `${Math.floor(remaining / 60)}m remaining`
+    : "expired (will refresh on next use)";
+  console.log(`Token: ${expiry}`);
+}
+
+// ---------------------------------------------------------------------------
+// agent commands
+// ---------------------------------------------------------------------------
+
+async function cmdAgentList(): Promise<void> {
+  const agents = listAgents();
+  const config = isQuackProject() ? readConfig() : null;
+  const defaultAgent = config?.default_agent;
+
+  console.log("Available agents:\n");
+  for (const agent of agents) {
+    const installed = isAgentAvailable(agent) ? `${GREEN}✓ installed${RESET}` : `${RED}✗ not installed${RESET}`;
+    const isDefault = defaultAgent === agent.name ? "  default" : "";
+    const installedPlain = stripAnsi(installed);
+    console.log(`  ${agent.name.padEnd(12)} ${installedPlain.padEnd(18)}${isDefault}  ${agent.description}`);
+  }
+  console.log(
+    "\nThese agents are built into quack. New agents appear automatically\nwhen you update quack.",
+  );
+}
+
+async function cmdAgentDescribe(name: string): Promise<void> {
+  const agent = getAgent(name);
+  if (!agent) {
+    console.error(`Unknown agent: ${name}`);
+    console.error("Run `quack agent list` to see available agents.");
+    process.exit(1);
+  }
+  const config = isQuackProject() ? readConfig() : null;
+  const isDefault = config?.default_agent === name;
+  const installed = isAgentAvailable(agent);
+
+  console.log(`Name:        ${agent.name}`);
+  console.log(`Description: ${agent.description}`);
+  console.log(`Binary:      ${agent.binary}`);
+  console.log(`Status:      ${installed ? `${GREEN}✓${RESET} installed` : `${RED}✗${RESET} not installed`}`);
+  if (isDefault) {
+    console.log(`Default:     yes`);
   }
 }
 
@@ -324,7 +386,7 @@ async function cmdQuack(): Promise<void> {
     // Interactive picker — multiple agents available, no default set.
     if (!isInteractive()) {
       console.error(
-        "No default agent set and multiple are installed. Set \"default_agent\" in .quack/config.json.",
+        'No default agent set and multiple are installed. Set "default_agent" in .quack/config.json.',
       );
       process.exit(1);
     }
@@ -352,7 +414,7 @@ async function cmdQuack(): Promise<void> {
   const getAccessToken = () => {
     const c = loadCredentials();
     if (!c) {
-      throw new Error("Not logged in. Run `quack login` first.");
+      throw new Error("Not logged in. Run `quack auth login` first.");
     }
     return c.access_token;
   };
@@ -380,16 +442,18 @@ async function cmdQuack(): Promise<void> {
   }
 }
 
-async function cmdAgent(agentName: string, args: string[]): Promise<void> {
+// ---------------------------------------------------------------------------
+// Agent launch (quack opencode / quack <agent>)
+// ---------------------------------------------------------------------------
+
+async function cmdAgentLaunch(agentName: string, args: string[], opts: { print?: boolean; verbose?: boolean }): Promise<void> {
   const agent = getAgent(agentName);
   if (!agent) {
     console.error(`Unknown agent: ${agentName}`);
-    console.error("Run `quack agents` to see available agents.");
+    console.error("Run `quack agent list` to see available agents.");
     process.exit(1);
   }
 
-  const print = args.includes("--print");
-  const verbose = args.includes("--verbose");
   const passThrough = args.filter((a) => !a.startsWith("--"));
   const apiBase = effectiveApiBase();
 
@@ -407,16 +471,13 @@ async function cmdAgent(agentName: string, args: string[]): Promise<void> {
   const getAccessToken = () => {
     const c = loadCredentials();
     if (!c) {
-      throw new Error("Not logged in. Run `quack login` first.");
+      throw new Error("Not logged in. Run `quack auth login` first.");
     }
     return c.access_token;
   };
 
   const state = readState();
 
-  // Proxy port is assigned by the agent at launch time (it starts the
-  // proxy). For buildConfig (used in --print), we pass 0 as a placeholder;
-  // the agent replaces it with the real port.
   const ctx = {
     proxyPort: 0,
     apiBase,
@@ -426,8 +487,8 @@ async function cmdAgent(agentName: string, args: string[]): Promise<void> {
 
   const result = await agent.launch(ctx, {
     args: passThrough,
-    verbose,
-    print,
+    verbose: opts.verbose ?? false,
+    print: opts.print ?? false,
   });
 
   if (result.exitCode !== null) {
@@ -435,142 +496,162 @@ async function cmdAgent(agentName: string, args: string[]): Promise<void> {
   }
 }
 
-async function cmdAgents(args: string[]): Promise<void> {
-  const sub = args[0];
+// ---------------------------------------------------------------------------
+// Build the CLI
+// ---------------------------------------------------------------------------
 
-  if (!sub || sub === "list") {
-    const agents = listAgents();
-    const config = isQuackProject() ? readConfig() : null;
-    const defaultAgent = config?.default_agent;
+function buildCli(): Command {
+  const program = new Command();
 
-    console.log("Available agents:\n");
-    for (const agent of agents) {
-      const installed = isAgentAvailable(agent) ? "✓ installed" : "✗ not installed";
-      const isDefault = defaultAgent === agent.name ? "  default" : "";
-      console.log(`  ${agent.name.padEnd(12)} ${installed.padEnd(18)}${isDefault}  ${agent.description}`);
-    }
-    console.log(
-      "\nThese agents are built into quack. New agents appear automatically\nwhen you update quack.",
-    );
-    return;
-  }
+  program
+    .name("quack")
+    .description("Launch AI coding agents with ModelWorks circuits")
+    .version(VERSION, "-v, --version")
+    .option("--api-base <url>", "Override API base URL")
+    .helpOption("-h, --help", "Show help");
 
-  console.error(`Unknown agents subcommand: ${sub}`);
-  console.error("Usage: quack agents [list]");
-  process.exit(1);
+  // init
+  program
+    .command("init")
+    .description("Initialize a quack project (.quack/ directory)")
+    .option("--force", "Overwrite existing .quack/ directory")
+    .action(async (opts) => {
+      requireAuth();
+      await cmdInit(opts);
+    });
+
+  // circuit group
+  const circuit = program
+    .command("circuit")
+    .description("Manage circuits in this project");
+
+  circuit
+    .command("list")
+    .description("List circuits and their adapters")
+    .option("-l, --long", "Show full UIDs (CIRCUIT UID column)")
+    .action(async (opts) => {
+      requireAuth();
+      await cmdCircuitList(opts);
+    });
+
+  circuit
+    .command("add <url>")
+    .description("Add a circuit by URL or UID")
+    .action(async (url) => {
+      requireAuth();
+      await cmdCircuitAdd(url);
+    });
+
+  circuit
+    .command("remove <uid>")
+    .description("Remove a circuit and delete its adaptors")
+    .option("--keep-adaptors", "Don't delete server-side adaptors")
+    .action(async (uid, opts) => {
+      requireAuth();
+      await cmdCircuitRemove(uid, opts);
+    });
+
+  circuit
+    .command("refresh [uid]")
+    .description("Re-resolve circuit version and adapters")
+    .action(async (uid) => {
+      requireAuth();
+      await cmdCircuitRefresh(uid);
+    });
+
+  circuit
+    .command("describe <uid>")
+    .description("Show detailed information about a circuit")
+    .action(async (uid) => {
+      requireAuth();
+      await cmdCircuitDescribe(uid);
+    });
+
+  // agent group
+  const agent = program
+    .command("agent")
+    .description("List and inspect available agents");
+
+  agent
+    .command("list")
+    .description("List all available agents")
+    .action(async () => {
+      await cmdAgentList();
+    });
+
+  agent
+    .command("describe <name>")
+    .description("Show details about a specific agent")
+    .action(async (name) => {
+      await cmdAgentDescribe(name);
+    });
+
+  // auth group
+  const auth = program
+    .command("auth")
+    .description("Authentication commands");
+
+  auth
+    .command("login")
+    .description("Login via OAuth (opens browser)")
+    .action(async () => {
+      const opts = program.opts();
+      await cmdAuthLogin(opts.apiBase);
+    });
+
+  auth
+    .command("logout")
+    .description("Logout and revoke credentials")
+    .action(async () => {
+      await cmdAuthLogout();
+    });
+
+  auth
+    .command("status")
+    .description("Show current user and token status")
+    .action(async () => {
+      await cmdAuthStatus();
+    });
+
+  // opencode — launch OpenCode (built-in agent)
+  program
+    .command("opencode [args...]")
+    .description("Launch OpenCode with SSE circuits as model providers")
+    .option("--print", "Show injected config, don't launch")
+    .option("--verbose", "Launch with proxy request logging")
+    .allowUnknownOption(true)
+    .action(async (args, opts) => {
+      requireAuth();
+      await cmdAgentLaunch("opencode", args ?? [], opts);
+    });
+
+  // Bare `quack` — launch the default agent.
+  // Commander calls the default action when no subcommand is given.
+  program.action(async () => {
+    requireAuth();
+    await cmdQuack();
+  });
+
+  return program;
 }
 
 // ---------------------------------------------------------------------------
-// Arg parsing helpers
-// ---------------------------------------------------------------------------
-
-/** Extract the value of a `--flag value` option, or `null`. */
-function flagValue(args: string[], flag: string): string | null {
-  const idx = args.indexOf(flag);
-  if (idx === -1 || idx + 1 >= args.length) return null;
-  return args[idx + 1];
-}
-
-/** Convert a `--api-base` flag value into an override (or `undefined`). */
-function apiBaseOverride(value: string | null): string | undefined {
-  return value ?? undefined;
-}
-
-// ---------------------------------------------------------------------------
-// Main dispatch
+// Main
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
+  const program = buildCli();
   const argv = process.argv.slice(2);
 
-  // Extract global flags (--api-base) before dispatching so command
-  // handlers only see positional args and their own flags.
-  const filtered: string[] = [];
-  let apiBaseOverrideVal: string | null = null;
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--api-base" && i + 1 < argv.length) {
-      apiBaseOverrideVal = argv[++i];
-      continue;
-    }
-    filtered.push(argv[i]);
-  }
-  if (apiBaseOverrideVal) {
-    process.env.QUACK_API_BASE = apiBaseOverrideVal;
-  }
-
-  const [cmd, ...rest] = filtered;
-
-  if (cmd === "--help" || cmd === "-h") {
-    printHelp();
-    return;
-  }
-  if (cmd === "--version" || cmd === "-v") {
-    console.log(VERSION);
-    return;
-  }
-
-  // Commands that don't require authentication.
-  const NO_AUTH = new Set(["login", "logout", "agents"]);
-  const needsAuth = !(cmd && NO_AUTH.has(cmd));
-
-  // Force login before anything that touches the API or launches an agent.
-  if (needsAuth) {
-    const creds = loadCredentials();
-    if (!creds) {
-      console.error("Not logged in. Run `quack login` first.");
-      process.exit(1);
-    }
-  }
-
-  if (!cmd) {
-    // Bare `quack` — launch the default agent.
-    await cmdQuack();
-    return;
+  // Set QUACK_API_BASE from the global --api-base flag before any
+  // command handler runs, so effectiveApiBase() picks it up.
+  const apiBaseIdx = argv.indexOf("--api-base");
+  if (apiBaseIdx !== -1 && apiBaseIdx + 1 < argv.length) {
+    process.env.QUACK_API_BASE = argv[apiBaseIdx + 1];
   }
 
   try {
-    switch (cmd) {
-      case "init":
-        await cmdInit(rest);
-        break;
-      case "login":
-        await cmdLogin(rest);
-        break;
-      case "logout":
-        await cmdLogout();
-        break;
-      case "whoami":
-        await cmdWhoami();
-        break;
-      case "add":
-        await cmdAdd(rest);
-        break;
-      case "rm":
-        await cmdRm(rest);
-        break;
-      case "ls":
-        await cmdLs(rest);
-        break;
-      case "refresh":
-        await cmdRefresh(rest);
-        break;
-      case "agents":
-        await cmdAgents(rest);
-        break;
-      case "opencode":
-        await cmdAgent("opencode", rest);
-        break;
-      default: {
-        // Check if it's a built-in agent name.
-        if (getAgent(cmd)) {
-          await cmdAgent(cmd, rest);
-          break;
-        }
-        console.error(`Unknown command: ${cmd}`);
-        printHelp();
-        process.exit(1);
-      }
-    }
+    await program.parseAsync(process.argv);
   } catch (err) {
     console.error(`error: ${(err as Error).message}`);
     process.exit(1);
