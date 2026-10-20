@@ -216,31 +216,36 @@ async function cmdLs(args: string[]): Promise<void> {
   const wSse = col("SSE", rows, "sse");
   const wAdapters = col("ADAPTERS", rows, "adapters");
 
-  // Default columns: NAME, SSE, ADAPTERS
+  // Default columns: NAME, SSE, ADAPTERS, VERSION UID
+  // --long adds: CIRCUIT UID, ADAPTOR UID
+  const wVersion = col("VERSION UID", rows, "versionUid");
+
   // Header
-  console.log(
-    `${"NAME".padEnd(wName)}  ${"SSE".padEnd(wSse)}  ${"ADAPTERS"}`,
-  );
-  console.log(`${"─".repeat(wName)}  ${"─".repeat(wSse)}  ${"─".repeat(Math.max("ADAPTERS".length, ...rows.map((r) => stripAnsi(r.adapters).length)))}`);
+  const headerCols = `${"NAME".padEnd(wName)}  ${"SSE".padEnd(wSse)}  ${"ADAPTERS"}  ${"VERSION UID".padEnd(wVersion)}`;
+  if (long) {
+    const wCircuit = col("CIRCUIT UID", rows, "circuitUid");
+    const wAdaptor = col("ADAPTOR UID", rows, "adaptorUid");
+    console.log(`${headerCols}  ${"CIRCUIT UID".padEnd(wCircuit)}  ${"ADAPTOR UID"}`);
+  } else {
+    console.log(headerCols);
+  }
+  const sepAdapters = Math.max("ADAPTERS".length, ...rows.map((r) => stripAnsi(r.adapters).length));
+  console.log(`${"─".repeat(wName)}  ${"─".repeat(wSse)}  ${"─".repeat(sepAdapters)}  ${"─".repeat(wVersion)}`);
 
   for (const r of rows) {
+    const base = `${r.name.padEnd(wName)}  ${stripAnsi(r.sse).padEnd(wSse)}  ${r.adapters}  ${DIM}${r.versionUid.padEnd(wVersion)}${RESET}`;
     if (long) {
       const wCircuit = col("CIRCUIT UID", rows, "circuitUid");
-      const wVersion = col("VERSION UID", rows, "versionUid");
       const wAdaptor = col("ADAPTOR UID", rows, "adaptorUid");
-      console.log(
-        `${r.name.padEnd(wName)}  ${stripAnsi(r.sse).padEnd(wSse)}  ${r.adapters}  ${DIM}${r.circuitUid.padEnd(wCircuit)}${RESET}  ${DIM}${r.versionUid.padEnd(wVersion)}${RESET}  ${DIM}${r.adaptorUid}${RESET}`,
-      );
+      console.log(`${base}  ${DIM}${r.circuitUid.padEnd(wCircuit)}${RESET}  ${DIM}${r.adaptorUid}${RESET}`);
     } else {
-      console.log(
-        `${r.name.padEnd(wName)}  ${stripAnsi(r.sse).padEnd(wSse)}  ${r.adapters}`,
-      );
+      console.log(base);
     }
   }
 
   if (long) {
     console.log("");
-    console.log(`${GREEN}✓${RESET} SSE-compatible   ${YELLOW}~${RESET} SSE adapter missing   ${RED}✗${RESET} no SSE   ${DIM}UIDs shown with --long${RESET}`);
+    console.log(`${GREEN}✓${RESET} SSE-compatible   ${YELLOW}~${RESET} SSE adapter missing   ${RED}✗${RESET} no SSE   ${DIM}--long shows CIRCUIT UID and ADAPTOR UID${RESET}`);
   }
 }
 
