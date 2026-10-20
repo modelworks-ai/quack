@@ -433,7 +433,7 @@ async function pickAgentInteractive(): Promise<string | null> {
 // Bare `quack` — launch the default agent
 // ---------------------------------------------------------------------------
 
-async function cmdQuack(): Promise<void> {
+async function cmdQuack(opts: { verbose?: boolean }): Promise<void> {
   if (!isQuackProject()) {
     console.error("Not a quack project. Run `quack init` first.");
     process.exit(1);
@@ -497,7 +497,7 @@ async function cmdQuack(): Promise<void> {
 
   const launchResult = await agent.launch(ctx, {
     args: [],
-    verbose: false,
+    verbose: opts.verbose ?? false,
     print: false,
   });
 
@@ -578,6 +578,7 @@ function buildCli(): Command {
     .description("Launch AI coding agents with ModelWorks circuits")
     .version(VERSION, "-v, --version")
     .option("--api-base <url>", "Override API base URL")
+    .option("--verbose", "Verbose output (proxy request logging)")
     .helpOption("-h, --help", "Show help");
 
   // init
@@ -696,7 +697,6 @@ function buildCli(): Command {
     .command("opencode [args...]")
     .description("Launch OpenCode with SSE circuits as model providers")
     .option("--print", "Show injected config, don't launch")
-    .option("--verbose", "Launch with proxy request logging")
     .allowUnknownOption(true)
     .action(async (args, opts) => {
       requireAuth();
@@ -705,9 +705,9 @@ function buildCli(): Command {
 
   // Bare `quack` — launch the default agent.
   // Commander calls the default action when no subcommand is given.
-  program.action(async () => {
+  program.action(async (opts) => {
     requireAuth();
-    await cmdQuack();
+    await cmdQuack(opts);
   });
 
   return program;
