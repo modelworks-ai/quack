@@ -148,11 +148,18 @@ const YELLOW = "\x1b[33m";
 const DIM = "\x1b[2m";
 const RESET = "\x1b[0m";
 
+/** Strip ANSI escape codes to measure the visible text length. */
+function stripAnsi(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
 async function cmdLs(args: string[]): Promise<void> {
   if (!isQuackProject()) {
     console.error("Not a quack project. Run `quack init` first.");
     process.exit(1);
   }
+  const long = args.includes("-l") || args.includes("--long");
   const config = readConfig();
   const state = readState();
 
@@ -161,31 +168,29 @@ async function cmdLs(args: string[]): Promise<void> {
     return;
   }
 
-  // Compute column widths from all adapter rows.
-  const wAdapter = Math.max(
-    "ADAPTER".length,
-    ...config.circuits.flatMap((e) => {
-      const s = state.circuits[e.circuit_uid];
-      return s ? s.adapters : [];
-    }).map((a) => a.length),
-  );
-  const wAdaptorUid = Math.max(
-    "ADAPTOR UID".length,
-    ...config.circuits.flatMap((e) => {
-      const s = state.circuits[e.circuit_uid];
-      if (!s || !s.adaptor_uids) return [];
-      return Object.values(s.adaptor_uids);
-    }).map((u) => u.length),
-  );
+  // Build all rows: first row per circuit carries name/SSE/version/circuit UID;
+  // adapter rows carry the adapter type + adaptor UID.
+  interface Row {
+    name: string;
+    sse: string;       // colored ✓ or ✗ or ~ or "" for adapter rows
+    adapter: string;   // "" for circuit row
+    adaptorUid: string;
+    versionUid: string;
+    circuitUid: string;
+  }
 
+  const rows: Row[] = [];
   for (const entry of config.circuits) {
     const s = state.circuits[entry.circuit_uid];
-
     if (!s) {
-      console.log(
-        `${entry.name}  ${RED}✗${RESET} not synced (run \`quack refresh\`)`,
-      );
-      console.log();
+      rows.push({
+        name: entry.name,
+        sse: `${RED}✗${RESET}`,
+        adapter: `${DIM}not synced (run \`quack refresh\`)${RESET}`,
+        adaptorUid: "",
+        versionUid: "",
+        circuitUid: entry.circuit_uid,
+      });
       continue;
     }
 
@@ -196,19 +201,59 @@ async function cmdLs(args: string[]): Promise<void> {
         ? `${YELLOW}~${RESET}`
         : `${RED}✗${RESET}`;
 
-    // First row: circuit name, SSE status, version UID.
-    console.log(
-      `${entry.name}  ${sseMark} SSE  ${DIM}${s.version_uid}${RESET}`,
-    );
+    // First row: circuit summary.
+    rows.push({
+      name: entry.name,
+      sse: sseMark,
+      adapter: "",
+      adaptorUid: "",
+      versionUid: s.version_uid,
+      circuitUid: s.circuit_uid,
+    });
 
-    // Adapter rows: one per adapter, left-aligned with the circuit row.
+    // Adapter rows.
     for (const adapter of s.adapters) {
       const uid = s.adaptor_uids?.[adapter] ?? "—";
-      console.log(
-        `${" ".repeat(entry.name.length + 2)}${adapter.padEnd(wAdapter)}  ${DIM}${uid}${RESET}`,
-      );
+      rows.push({
+        name: "",
+        sse: "",
+        adapter,
+        adaptorUid: uid,
+        versionUid: "",
+        circuitUid: "",
+      });
     }
-    console.log();
+  }
+
+  // Column width helpers (strip ANSI to measure visible text).
+  const wName = Math.max("NAME".length, ...rows.map((r) => stripAnsi(r.name).length));
+  const wSse = Math.max("SSE".length, ...rows.map((r) => stripAnsi(r.sse).length));
+  const wAdapter = Math.max("ADAPTER".length, ...rows.map((r) => stripAnsi(r.adapter).length));
+  const wAdaptorUid = Math.max("ADAPTOR UID".length, ...rows.map((r) => stripAnsi(r.adaptorUid).length));
+  const wVersion = Math.max("VERSION UID".length, ...rows.map((r) => stripAnsi(r.versionUid).length));
+
+  // Header + separator.
+  const header = `${"NAME".padEnd(wName)}  ${"SSE".padEnd(wSse)}  ${"ADAPTER".padEnd(wAdapter)}  ${"ADAPTOR UID".padEnd(wAdaptorUid)}  ${"VERSION UID".padEnd(wVersion)}`;
+  if (long) {
+    const wCircuit = Math.max("CIRCUIT UID".length, ...rows.map((r) => stripAnsi(r.circuitUid).length));
+    console.log(`${header}  ${"CIRCUIT UID".padEnd(wCircuit)}`);
+    console.log(`${"─".repeat(wName)}  ${"─".repeat(wSse)}  ${"─".repeat(wAdapter)}  ${"─".repeat(wAdaptorUid)}  ${"─".repeat(wVersion)}  ${"─".repeat(wCircuit)}`);
+  } else {
+    console.log(header);
+    console.log(`${"─".repeat(wName)}  ${"─".repeat(wSse)}  ${"─".repeat(wAdapter)}  ${"─".repeat(wAdaptorUid)}  ${"─".repeat(wVersion)}`);
+  }
+
+  // Data rows.
+  for (const r of rows) {
+    const versionCell = r.versionUid ? `${DIM}${r.versionUid.padEnd(wVersion)}${RESET}` : "".padEnd(wVersion);
+    const base = `${r.name.padEnd(wName)}  ${stripAnsi(r.sse).padEnd(wSse)}  ${r.adapter.padEnd(wAdapter)}  ${r.adaptorUid.padEnd(wAdaptorUid)}  ${versionCell}`;
+    if (long) {
+      const wCircuit = Math.max("CIRCUIT UID".length, ...rows.map((r) => stripAnsi(r.circuitUid).length));
+      const circuitCell = r.circuitUid ? `${DIM}${r.circuitUid.padEnd(wCircuit)}${RESET}` : "".padEnd(wCircuit);
+      console.log(`${base}  ${circuitCell}`);
+    } else {
+      console.log(base);
+    }
   }
 }
 
