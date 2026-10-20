@@ -54,7 +54,7 @@ test("buildOpenCodeConfig: injects SSE-compatible circuit as provider", () => {
   const config = buildOpenCodeConfig(state, PORT);
   const provider = config.provider?.["circuit-c-abc"];
   assert.ok(provider, "provider missing");
-  assert.equal(provider!.name, "Test Circuit");
+  assert.equal(provider!.name, "ModelWorks");
   assert.equal(provider!.npm, "@ai-sdk/openai-compatible");
   assert.equal(
     provider!.options.baseURL,

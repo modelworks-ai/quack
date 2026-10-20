@@ -167,7 +167,7 @@ export function buildOpenCodeConfig(
     const providerKey = `circuit-${entry.circuit_uid}`;
     const provider: OpenCodeProvider = {
       npm: OPENAI_COMPATIBLE_NPM,
-      name: entry.circuit_name,
+      name: "ModelWorks",
       options: {
         baseURL: `${proxyBase}/api/circuit-adaptors/${entry.sse_adaptor_uid}/query`,
         // Dummy apiKey — the proxy overrides the Authorization header.
