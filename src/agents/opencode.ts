@@ -61,7 +61,10 @@ export function buildOpenCodeConfig(state: QuackState, port: number): OpenCodeCo
           type: "remote",
           url: `${proxyBase}/api/x.mcp`,
           oauth: false,
-          protocol: "auto",
+          // x.mcp requires MCP 2.0 (server/discover) and rejects the
+          // legacy initialize handshake. "auto" probes then falls back
+          // to legacy, which gets rejected — so force 2026-07-28.
+          protocol: "2026-07-28",
           // Dummy auth header — the proxy overrides it with the real
           // Bearer token. Without this, OpenCode sees no auth config and
           // prompts the user to authenticate ("MCP Authentication Required").

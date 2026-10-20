@@ -28,7 +28,7 @@ test("buildOpenCodeConfig: includes the global modelworks MCP server", () => {
   assert.equal(config.mcp!.servers!["ModelWorks x.MCP"].type, "remote");
   assert.equal(config.mcp!.servers!["ModelWorks x.MCP"].url, `${PROXY_BASE}/api/x.mcp`);
   assert.equal(config.mcp!.servers!["ModelWorks x.MCP"].oauth, false);
-  assert.equal(config.mcp!.servers!["ModelWorks x.MCP"].protocol, "auto");
+  assert.equal(config.mcp!.servers!["ModelWorks x.MCP"].protocol, "2026-07-28");
   // Dummy auth header — the proxy overrides it with the real token.
   assert.equal(
     config.mcp!.servers!["ModelWorks x.MCP"].headers?.Authorization,

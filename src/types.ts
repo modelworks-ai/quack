@@ -197,7 +197,7 @@ export interface OpenCodeMcpServer {
   type: "remote";
   url: string;
   oauth: false;
-  protocol: "auto";
+  protocol: "auto" | "2026-07-28" | "legacy";
   headers?: Record<string, string>;
 }
 
