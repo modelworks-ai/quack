@@ -208,6 +208,7 @@ const sampleState: CircuitStateEntry = {
   circuit_name: "Test Circuit",
   adapters: ["OPEN_AI_SSE"],
   sse_adaptor_uid: "ca-test",
+  adaptor_uids: { OPEN_AI_SSE: "ca-test" },
   resolved_at: "2026-01-01T00:00:00Z",
 };
 
@@ -233,6 +234,7 @@ test("upsertCircuitState: replaces existing entry", () => {
     const updated: CircuitStateEntry = {
       ...sampleState,
       sse_adaptor_uid: "ca-different",
+  adaptor_uids: { OPEN_AI_SSE: "ca-different" },
     };
     upsertCircuitState(updated);
     const s = getCircuitState("c-test");

@@ -403,6 +403,18 @@ export async function addCircuit(input: string, apiBase: string): Promise<AddRes
   const { adapters, determined } = await discoverAdapters(version, apiBase);
   const sse_adaptor_uid = await ensureSseAdaptor(apiBase, version.uid, adapters, determined);
 
+  // Build adaptor_uids map from existing adaptors + the one we just created.
+  const existingAdaptors = await listAdaptors(apiBase, version.uid);
+  const adaptor_uids: Record<string, string> = {};
+  for (const a of existingAdaptors) {
+    adaptor_uids[fromApiAdapterType(a.adapter_type)] = a.uid;
+  }
+  // The SSE adaptor we just created might not be in the list response yet
+  // (it was just created), so make sure it's in the map.
+  if (sse_adaptor_uid) {
+    adaptor_uids[OPEN_AI_SSE] = sse_adaptor_uid;
+  }
+
   // If we created an SSE adaptor despite not being able to determine
   // adapters, mark SSE-compatible in state (unverified).
   const effectiveAdapters = determined
@@ -425,6 +437,7 @@ export async function addCircuit(input: string, apiBase: string): Promise<AddRes
     circuit_name: circuit.name,
     adapters: effectiveAdapters,
     sse_adaptor_uid,
+    adaptor_uids,
     resolved_at: now,
   };
 

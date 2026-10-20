@@ -72,6 +72,13 @@ export interface CircuitStateEntry {
    * for this circuit, or `null` if the circuit isn't SSE-compatible.
    */
   sse_adaptor_uid: string | null;
+  /**
+   * Map of adapter type → adaptor UID (`ca-xxx`) for each temporal
+   * adaptor quack created. Currently only `OPEN_AI_SSE` is created
+   * by quack, but existing adaptors discovered via the list endpoint
+   * are also stored here.
+   */
+  adaptor_uids: Record<string, string>;
   /** ISO 8601 timestamp of the last resolution. */
   resolved_at: string;
 }
