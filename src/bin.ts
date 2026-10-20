@@ -96,6 +96,7 @@ async function cmdWhoami(): Promise<void> {
   }
 
   console.log(`User:  ${username}`);
+  console.log(`UID:   ${creds.user_uid}`);
   console.log(`API:   ${creds.api_base}`);
   const now = Math.floor(Date.now() / 1000);
   const remaining = creds.expires_at - now;
