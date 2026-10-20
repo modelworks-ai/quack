@@ -167,14 +167,6 @@ export interface CircuitAdaptorPublic {
 }
 
 /**
- * Request body for `POST /circuit-adaptors`.
- */
-export interface CreateCircuitAdaptorBody {
-  circuit_version_uid: string;
-  adapter_type: string;
-}
-
-/**
  * Handle to a running local proxy.
  */
 export interface ProxyHandle {

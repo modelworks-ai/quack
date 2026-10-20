@@ -218,9 +218,8 @@ async function cmdCircuitAdd(url: string): Promise<void> {
   }
 }
 
-async function cmdCircuitRemove(ref: string, opts: { keepAdaptors?: boolean }): Promise<void> {
-  const apiBase = effectiveApiBase();
-  const result = await removeCircuit(ref, apiBase, opts.keepAdaptors ?? false);
+async function cmdCircuitRemove(ref: string): Promise<void> {
+  const result = await removeCircuit(ref);
   console.log(`Removed circuit '${result.name}' (${result.circuit_uid}).`);
 
   // Clear default_circuit if it pointed to the removed circuit.
@@ -615,11 +614,10 @@ function buildCli(): Command {
 
   circuit
     .command("remove <uid>")
-    .description("Remove a circuit and delete its adaptors")
-    .option("--keep-adaptors", "Don't delete server-side adaptors")
-    .action(async (uid, opts) => {
+    .description("Remove a circuit from this project")
+    .action(async (uid) => {
       requireAuth();
-      await cmdCircuitRemove(uid, opts);
+      await cmdCircuitRemove(uid);
     });
 
   circuit

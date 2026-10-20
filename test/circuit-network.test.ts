@@ -58,19 +58,14 @@ const SSE_CIRCUIT_RESPONSES = {
   },
 };
 
-/** Adaptor list (empty — first add). */
-const EMPTY_ADAPTORS = {
+/** Public SSE adaptor in the list response (system-created, user_uid: null). */
+const PUBLIC_SSE_ADAPTOR = {
   "GET /api/circuit-adaptors/by-circuit-version/cv-test": {
-    json: { status: "success", payload: [] },
-  },
-};
-
-/** Adaptor creation response. */
-const CREATE_ADAPTOR = {
-  "POST /api/circuit-adaptors": {
     json: {
       status: "success",
-      payload: { uid: "ca-new", adapter_type: "OPEN_AI_SSE" },
+      payload: [
+        { uid: "ca-sse", adapter_type: "OPEN_AI_SSE", user_uid: null, user_token_uid: null },
+      ],
     },
   },
 };
@@ -92,8 +87,8 @@ test("addCircuit: creates SSE adaptor when adapters undetermined", async () => {
 
     const { cleanup: cleanupFetch } = mockFetch({
       ...SSE_CIRCUIT_RESPONSES,
-      ...EMPTY_ADAPTORS,
-      ...CREATE_ADAPTOR,
+      ...PUBLIC_SSE_ADAPTOR,
+      
     });
 
     try {
@@ -101,7 +96,7 @@ test("addCircuit: creates SSE adaptor when adapters undetermined", async () => {
       assert.equal(result.circuit_uid, "c-test");
       assert.equal(result.version_uid, "cv-test");
       assert.equal(result.name, "Test Circuit");
-      assert.equal(result.sse_adaptor_uid, "ca-new");
+      assert.equal(result.sse_adaptor_uid, "ca-sse");
       assert.equal(result.sse_compatible, true);
       assert.equal(result.added, true);
       assert.ok(result.adapters.includes("OPEN_AI_SSE"));
@@ -129,7 +124,7 @@ test("addCircuit: reuses existing SSE adaptor", async () => {
         json: {
           status: "success",
           payload: [
-            { uid: "ca-existing", adapter_type: "OpenAiSse" },
+            { uid: "ca-existing", adapter_type: "OpenAiSse", user_uid: null, user_token_uid: null },
           ],
         },
       },
@@ -172,8 +167,8 @@ test("addCircuit: reports already-added when in config", async () => {
 
     const { cleanup: cleanupFetch } = mockFetch({
       ...SSE_CIRCUIT_RESPONSES,
-      ...EMPTY_ADAPTORS,
-      ...CREATE_ADAPTOR,
+      ...PUBLIC_SSE_ADAPTOR,
+      
     });
 
     try {
@@ -192,70 +187,7 @@ test("addCircuit: reports already-added when in config", async () => {
 // removeCircuit
 // ---------------------------------------------------------------------------
 
-test("removeCircuit: deletes adaptor and removes from config/state", async () => {
-  const { cleanup: cleanupDir } = withTempDir();
-  const { cleanup: cleanupConfig } = withTempConfigHome();
-  try {
-    fs.mkdirSync(".quack", { recursive: true });
-    fs.writeFileSync(
-      ".quack/config.json",
-      JSON.stringify({
-        version: 1,
-        circuits: [
-          {
-            url: "https://modelworks.ai/circuits/c-test",
-            circuit_uid: "c-test",
-            name: "Test Circuit",
-            added_at: "2026-01-01T00:00:00Z",
-          },
-        ],
-      }),
-    );
-    fs.writeFileSync(
-      ".quack/state.json",
-      JSON.stringify({
-        circuits: {
-          "c-test": {
-            circuit_uid: "c-test",
-            version_uid: "cv-test",
-            circuit_name: "Test Circuit",
-        owner_username: "alice",
-            adapters: ["OPEN_AI_SSE"],
-            sse_adaptor_uid: "ca-test",
-  adaptor_uids: { OPEN_AI_SSE: "ca-test" },
-            resolved_at: "2026-01-01T00:00:00Z",
-          },
-        },
-      }),
-    );
-    writeCredentials(API_BASE);
-
-    const { cleanup: cleanupFetch, calls } = mockFetch({
-      "DELETE /api/circuit-adaptors/ca-test": { status: 200, body: "" },
-    });
-
-    try {
-      const result = await removeCircuit("c-test", API_BASE);
-      assert.equal(result.circuit_uid, "c-test");
-      assert.equal(result.name, "Test Circuit");
-      // Verify DELETE was called
-      const deleteCall = calls.find((c) => c.method === "DELETE");
-      assert.ok(deleteCall, "DELETE should have been called");
-      // Verify config + state cleaned up
-      const config = JSON.parse(fs.readFileSync(".quack/config.json", "utf8"));
-      assert.equal(config.circuits.length, 0);
-      const state = JSON.parse(fs.readFileSync(".quack/state.json", "utf8"));
-      assert.ok(!("c-test" in state.circuits));
-    } finally {
-      cleanupFetch();
-    }
-  } finally {
-    cleanupConfig();
-    cleanupDir();
-  }
-});
-
-test("removeCircuit: --keep-adaptors skips server-side deletion", async () => {
+test("removeCircuit: removes from config/state (no adaptor deletion)", async () => {
   const { cleanup: cleanupDir } = withTempDir();
   const { cleanup: cleanupConfig } = withTempConfigHome();
   try {
@@ -297,9 +229,16 @@ test("removeCircuit: --keep-adaptors skips server-side deletion", async () => {
     const { cleanup: cleanupFetch, calls } = mockFetch({});
 
     try {
-      const result = await removeCircuit("c-test", API_BASE, true);
+      const result = await removeCircuit("c-test");
       assert.equal(result.circuit_uid, "c-test");
+      assert.equal(result.name, "Test Circuit");
+      // No API calls should be made — public adaptors are not deleted
       assert.equal(calls.length, 0, "no API calls should have been made");
+      // Verify config + state cleaned up
+      const config = JSON.parse(fs.readFileSync(".quack/config.json", "utf8"));
+      assert.equal(config.circuits.length, 0);
+      const state = JSON.parse(fs.readFileSync(".quack/state.json", "utf8"));
+      assert.ok(!("c-test" in state.circuits));
     } finally {
       cleanupFetch();
     }
@@ -319,7 +258,7 @@ test("removeCircuit: throws if circuit not in config", async () => {
     writeCredentials(API_BASE);
 
     await assert.rejects(
-      removeCircuit("c-nonexistent", API_BASE),
+      removeCircuit("c-nonexistent"),
       /not in this project/,
     );
   } finally {
@@ -356,8 +295,8 @@ test("ensureState: syncs circuits missing from state", async () => {
 
     const { cleanup: cleanupFetch } = mockFetch({
       ...SSE_CIRCUIT_RESPONSES,
-      ...EMPTY_ADAPTORS,
-      ...CREATE_ADAPTOR,
+      ...PUBLIC_SSE_ADAPTOR,
+      
     });
 
     try {
@@ -365,7 +304,7 @@ test("ensureState: syncs circuits missing from state", async () => {
       // State should now be created with the circuit
       const state = JSON.parse(fs.readFileSync(".quack/state.json", "utf8"));
       assert.ok("c-test" in state.circuits);
-      assert.equal(state.circuits["c-test"].sse_adaptor_uid, "ca-new");
+      assert.equal(state.circuits["c-test"].sse_adaptor_uid, "ca-sse");
     } finally {
       cleanupFetch();
     }
@@ -487,12 +426,11 @@ test("ensureState: skips circuits that return 403 (no access)", async () => {
         },
       },
       "GET /api/circuit-adaptors/by-circuit-version/cv-public": {
-        json: { status: "success", payload: [] },
-      },
-      "POST /api/circuit-adaptors": {
         json: {
           status: "success",
-          payload: { uid: "ca-public", adapter_type: "OPEN_AI_SSE" },
+          payload: [
+            { uid: "ca-public", adapter_type: "OPEN_AI_SSE", user_uid: null, user_token_uid: null },
+          ],
         },
       },
     });
