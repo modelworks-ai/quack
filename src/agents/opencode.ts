@@ -40,6 +40,27 @@ function hasBinary(bin: string): boolean {
   }
 }
 
+/** Check if a file exists and is executable at a specific path. */
+function hasBinaryAt(binPath: string): boolean {
+  try {
+    fs.accessSync(binPath, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Resolve the opencode binary: prefer V2 (MCP 2.0 support), fall back to V1. */
+function resolveOpencodeBinary(): { bin: string; isV2: boolean } | null {
+  // V2: on PATH as "opencode2", or at ~/.opencode/bin/opencode2
+  if (hasBinary("opencode2")) return { bin: "opencode2", isV2: true };
+  const v2Path = path.join(os.homedir(), ".opencode", "bin", "opencode2");
+  if (hasBinaryAt(v2Path)) return { bin: v2Path, isV2: true };
+  // V1: on PATH as "opencode"
+  if (hasBinary("opencode")) return { bin: "opencode", isV2: false };
+  return null;
+}
+
 /** Install methods for opencode, in priority order. */
 const OPENCODE_INSTALL = [
   { label: "curl", cmd: "curl -fsSL https://opencode.ai/install | bash", check: () => hasBinary("curl") },
@@ -161,13 +182,14 @@ export const opencodeAgent: Agent = {
   buildConfig(ctx: AgentContext): Record<string, string> {
     const config = buildOpenCodeConfig(ctx.state, ctx.proxyPort);
     return {
-      OPENCODE_CONFIG_CONTENT: JSON.stringify(config, null, 2),
+      OPENCODE_CONFIG: JSON.stringify(config, null, 2),
     };
   },
 
   async launch(ctx: AgentContext, opts: LaunchOptions): Promise<LaunchResult> {
-    // Check the binary before doing anything else.
-    if (!opts.print && !hasBinary("opencode")) {
+    // Resolve the opencode binary (prefer V2 for MCP 2.0 support).
+    const resolved = resolveOpencodeBinary();
+    if (!opts.print && !resolved) {
       printInstallHint();
       return { exitCode: 1, proxyPort: 0 };
     }
@@ -233,7 +255,10 @@ export const opencodeAgent: Agent = {
     fs.writeFileSync(configFile, configJson);
 
     // Spawn opencode with the config file path injected via env.
-    const child = spawn("opencode", opts.args, {
+    // V2 uses a background service — pass --standalone so it runs a private
+    // server that picks up OPENCODE_CONFIG fresh every launch.
+    const spawnArgs = resolved?.isV2 ? ["--standalone", ...opts.args] : opts.args;
+    const child = spawn(resolved!.bin, spawnArgs, {
       stdio: "inherit",
       env: {
         ...process.env,

@@ -11,6 +11,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { accessSync, constants } from "node:fs";
 
 import type { Agent } from "./types.js";
 import { opencodeAgent } from "./opencode.js";
@@ -31,8 +32,26 @@ export function hasBinary(bin: string): boolean {
   }
 }
 
-/** Is this agent's binary installed on PATH? */
+/** Check if a file exists and is executable at a specific path. */
+export function hasBinaryAt(binPath: string): boolean {
+  try {
+    accessSync(binPath, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Is this agent's binary installed (on PATH or at a known location)? */
 export function isAgentAvailable(agent: Agent): boolean {
+  // opencode: check both V2 (opencode2) and V1 (opencode)
+  if (agent.name === "opencode") {
+    if (hasBinary("opencode2")) return true;
+    const home = process.env.HOME ?? "";
+    if (home && hasBinaryAt(`${home}/.opencode/bin/opencode2`)) return true;
+    if (hasBinary("opencode")) return true;
+    return false;
+  }
   return hasBinary(agent.binary);
 }
 
