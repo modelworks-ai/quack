@@ -60,13 +60,6 @@ function effectiveApiBase(): string {
 
 async function cmdInit(args: string[]): Promise<void> {
   const force = args.includes("--force");
-  // Require login before init — a quack project is useless without
-  // credentials (can't add circuits, can't launch).
-  const creds = loadCredentials();
-  if (!creds) {
-    console.error("Not logged in. Run `quack login` first.");
-    process.exit(1);
-  }
   initProject(force);
 }
 
@@ -217,12 +210,6 @@ async function cmdQuack(): Promise<void> {
     process.exit(1);
   }
 
-  const creds = loadCredentials();
-  if (!creds) {
-    console.error("Not logged in. Run `quack login` first.");
-    process.exit(1);
-  }
-
   const config = readConfig();
   const state = readState();
 
@@ -304,12 +291,6 @@ async function cmdAgent(agentName: string, args: string[]): Promise<void> {
   const verbose = args.includes("--verbose");
   const passThrough = args.filter((a) => !a.startsWith("--"));
   const apiBase = effectiveApiBase();
-
-  const creds = loadCredentials();
-  if (!creds) {
-    console.error("Not logged in. Run `quack login` first.");
-    process.exit(1);
-  }
 
   if (!isQuackProject()) {
     console.error("Not a quack project. Run `quack init` first.");
@@ -426,6 +407,20 @@ async function main(): Promise<void> {
     console.log(VERSION);
     return;
   }
+
+  // Commands that don't require authentication.
+  const NO_AUTH = new Set(["login", "logout", "agents"]);
+  const needsAuth = !(cmd && NO_AUTH.has(cmd));
+
+  // Force login before anything that touches the API or launches an agent.
+  if (needsAuth) {
+    const creds = loadCredentials();
+    if (!creds) {
+      console.error("Not logged in. Run `quack login` first.");
+      process.exit(1);
+    }
+  }
+
   if (!cmd) {
     // Bare `quack` — launch the default agent.
     await cmdQuack();
