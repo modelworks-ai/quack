@@ -1,6 +1,6 @@
 {
   "name": "@modelworks/quack",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Git-like authenticated circuit launcher for ModelWorks with a local proxy.",
   "type": "module",
   "bin": {
