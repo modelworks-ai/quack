@@ -35,7 +35,8 @@ test("initProject: creates .quack/ with config, state, .gitignore", () => {
     assert.ok(fs.existsSync(".quack/config.json"));
     assert.ok(fs.existsSync(".quack/state.json"));
     assert.ok(fs.existsSync(".quack/.gitignore"));
-    assert.equal(fs.readFileSync(".quack/.gitignore", "utf8").trim(), "state.json");
+    assert.ok(fs.existsSync(".quack/runs"));
+    assert.equal(fs.readFileSync(".quack/.gitignore", "utf8").trim(), "state.json\ndebug.log");
   } finally {
     cleanup();
   }

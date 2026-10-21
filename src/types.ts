@@ -167,6 +167,28 @@ export interface CircuitAdaptorPublic {
 }
 
 /**
+ * A circuit run record stored locally at `.quack/runs/cr-xxx.json`.
+ *
+ * Committed to the repo (team-shared). Contains only public metadata —
+ * no request body, no response body, nothing sensitive.
+ */
+export interface RunRecord {
+  run_uid: string;
+  circuit_uid: string;
+  circuit_name: string;
+  owner_username: string;
+  caller_username: string;
+  version_uid: string;
+  status: string;
+  created_at: string;
+  completed_at: string;
+  duration_ms: number | null;
+  cost_credits: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+}
+
+/**
  * Handle to a running local proxy.
  */
 export interface ProxyHandle {
@@ -188,6 +210,12 @@ export interface ProxyOptions {
   onLog?: (method: string, path: string, status: number) => void;
   /** Optional debug logger — full request/response details to a string sink. */
   onDebug?: (entry: string) => void;
+  /**
+   * Called after a response stream completes, if the response included
+   * an `X-Circuit-Run-Uid` header. Fire-and-forget — the proxy does not
+   * await this. Used to fetch and save the run record locally.
+   */
+  onRunComplete?: (runUid: string) => void;
 }
 
 /**

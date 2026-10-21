@@ -11,8 +11,11 @@ import os from "node:os";
 import path from "node:path";
 
 import { refreshToken } from "../auth.js";
+import { loadCredentials } from "../auth.js";
 import { readState, readConfig } from "../project.js";
 import { startProxy } from "../proxy.js";
+import { fetchRunFromApi, saveRunRecord } from "../history.js";
+import type { Credentials } from "../types.js";
 import type {
   ProxyHandle,
   QuackConfig,
@@ -231,6 +234,27 @@ function printInstallHint(): void {
   console.error("");
 }
 
+/** Load credentials for the history callback. Returns null if not logged in. */
+function loadCredentialsForHistory(): Credentials | null {
+  return loadCredentials();
+}
+
+/** Resolve the caller's username from the API (for run history records). */
+async function resolveCallerUsername(creds: Credentials): Promise<string> {
+  try {
+    const res = await fetch(`${creds.api_base}/api/users/token`, {
+      headers: { Authorization: `Bearer ${creds.access_token}` },
+    });
+    if (res.ok) {
+      const body = (await res.json()) as { payload?: { username?: string } };
+      return body.payload?.username ?? creds.user_uid;
+    }
+  } catch {
+    // Fall back to user_uid.
+  }
+  return creds.user_uid;
+}
+
 /** The OpenCode agent plugin. */
 export const opencodeAgent: Agent = {
   name: "opencode",
@@ -293,6 +317,29 @@ export const opencodeAgent: Agent = {
       onDebug: opts.debug
         ? (entry: string) => writeDebug(entry)
         : undefined,
+      // Fire-and-forget: fetch and save run records after each stream completes.
+      onRunComplete: opts.print
+        ? undefined
+        : (runUid: string) => {
+            // Don't block the proxy — fire and forget.
+            void (async () => {
+              try {
+                const creds = loadCredentialsForHistory();
+                if (!creds) return;
+                const currentState = readState();
+                const callerUsername = await resolveCallerUsername(creds);
+                const record = await fetchRunFromApi(
+                  runUid,
+                  creds,
+                  currentState.circuits,
+                  callerUsername,
+                );
+                if (record) saveRunRecord(record);
+              } catch {
+                // Silent — don't crash the proxy on history save failures.
+              }
+            })();
+          },
     });
 
     if (opts.verbose || opts.debug) {

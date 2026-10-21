@@ -102,6 +102,10 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
           res.setHeader(key, value);
         }
 
+        // Capture the circuit run UID for history saving.
+        const runUid = upstream.headers.get("x-circuit-run-uid");
+        const onRunComplete = opts.onRunComplete;
+
         if (opts.onDebug) {
           const elapsed = Date.now() - startTime;
           debug(`--- response ${upstream.status} (${elapsed}ms) ---`);
@@ -142,10 +146,27 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
               debug(debugBody.slice(0, 2000) + (bodyBytes > 2000 ? "..." : ""));
               const totalMs = Date.now() - startTime;
               debug(`=== END ${req.method} ${req.url} ${upstream.status} (${totalMs}ms) ===\n`);
+              // Fire-and-forget: save run history after stream completes.
+              if (runUid && onRunComplete) onRunComplete(runUid);
             };
             pump();
           } else {
-            Readable.fromWeb(upstream.body as never).pipe(res);
+            const reader = upstream.body.getReader();
+            const pumpPlain = async () => {
+              try {
+                for (;;) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  res.write(value);
+                }
+                res.end();
+              } catch {
+                if (!res.writableEnded) res.end();
+              }
+              // Fire-and-forget: save run history after stream completes.
+              if (runUid && onRunComplete) onRunComplete(runUid);
+            };
+            pumpPlain();
           }
         } else {
           res.end();
@@ -154,6 +175,8 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
             const totalMs = Date.now() - startTime;
             debug(`=== END ${req.method} ${req.url} ${upstream.status} (${totalMs}ms) ===\n`);
           }
+          // Fire-and-forget: save run history even for empty-body responses.
+          if (runUid && onRunComplete) onRunComplete(runUid);
         }
 
         opts.onLog?.(req.method ?? "?", targetUrl.pathname, upstream.status);

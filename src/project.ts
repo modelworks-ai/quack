@@ -54,8 +54,8 @@ function emptyState(): QuackState {
   return { circuits: {} };
 }
 
-/** `.gitignore` contents for `.quack/` — ignores `state.json`. */
-const GITIGNORE_CONTENTS = "state.json\n";
+/** `.gitignore` contents for `.quack/` — ignores `state.json` (runs/ is committed). */
+const GITIGNORE_CONTENTS = "state.json\ndebug.log\n";
 
 /**
  * `quack init` — create the `.quack/` directory with empty config,
@@ -73,6 +73,7 @@ export function initProject(force = false): void {
   }
 
   fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(path.join(dir, "runs"), { recursive: true });
   fs.writeFileSync(configPath(), JSON.stringify(emptyConfig(), null, 2) + "\n");
   fs.writeFileSync(statePath(), JSON.stringify(emptyState(), null, 2) + "\n");
   fs.writeFileSync(path.join(dir, ".gitignore"), GITIGNORE_CONTENTS);

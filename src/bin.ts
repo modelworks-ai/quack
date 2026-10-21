@@ -26,6 +26,7 @@ import {
   writeConfig,
   writeState,
 } from "./project.js";
+import { listRunRecords, getRunRecord } from "./history.js";
 
 const VERSION = "0.2.0";
 import buildInfo from "./build-info.json" with { type: "json" };
@@ -570,6 +571,98 @@ async function cmdAgentLaunch(agentName: string, args: string[], opts: { print?:
 }
 
 // ---------------------------------------------------------------------------
+// history
+// ---------------------------------------------------------------------------
+
+async function cmdHistory(filter: string | undefined, opts: { user?: string; circuit?: string }): Promise<void> {
+  if (!isQuackProject()) {
+    console.error("Not a quack project. Run `quack init` first.");
+    process.exit(1);
+  }
+
+  // If a specific run UID is given, show full details.
+  if (filter && !filter.startsWith("-")) {
+    const record = getRunRecord(filter);
+    if (!record) {
+      console.error(`Run ${filter} not found in local history.`);
+      process.exit(1);
+    }
+    console.log(`Run UID:       ${record.run_uid}`);
+    console.log(`Circuit:       ${record.circuit_name} (${record.circuit_uid})`);
+    console.log(`Owner:         ${record.owner_username}`);
+    console.log(`Caller:        ${record.caller_username}`);
+    console.log(`Version UID:   ${record.version_uid}`);
+    console.log(`Status:        ${record.status}`);
+    console.log(`Created:       ${record.created_at}`);
+    console.log(`Completed:     ${record.completed_at}`);
+    if (record.duration_ms !== null) {
+      console.log(`Duration:      ${(record.duration_ms / 1000).toFixed(1)}s`);
+    }
+    if (record.cost_credits !== null) {
+      console.log(`Cost:          ${record.cost_credits} credits`);
+    }
+    if (record.input_tokens !== null) {
+      console.log(`Input tokens:  ${record.input_tokens}`);
+    }
+    if (record.output_tokens !== null) {
+      console.log(`Output tokens:  ${record.output_tokens}`);
+    }
+    return;
+  }
+
+  // List runs in table format.
+  let records = listRunRecords();
+
+  // Apply filters.
+  if (opts.user) {
+    records = records.filter((r) => r.caller_username === opts.user);
+  }
+  if (opts.circuit) {
+    records = records.filter((r) => r.circuit_uid === opts.circuit);
+  }
+
+  if (records.length === 0) {
+    console.log("No run history. Runs are saved automatically after each circuit request.");
+    return;
+  }
+
+  // Table: RUN UID, CIRCUIT, CALLER, STATUS, COST, DURATION
+  const rows = records.map((r) => ({
+    runUid: r.run_uid.length > 20 ? r.run_uid.slice(0, 20) + "…" : r.run_uid,
+    circuit: r.circuit_name,
+    caller: r.caller_username,
+    status: r.status,
+    cost: r.cost_credits !== null ? String(r.cost_credits) : "—",
+    duration: r.duration_ms !== null ? (r.duration_ms / 1000).toFixed(1) + "s" : "—",
+  }));
+
+  const wUid = Math.max("RUN UID".length, ...rows.map((r) => r.runUid.length));
+  const wCircuit = Math.max("CIRCUIT".length, ...rows.map((r) => r.circuit.length));
+  const wCaller = Math.max("CALLER".length, ...rows.map((r) => r.caller.length));
+  const wStatus = Math.max("STATUS".length, ...rows.map((r) => r.status.length));
+  const wCost = Math.max("COST".length, ...rows.map((r) => r.cost.length));
+  const wDur = Math.max("DURATION".length, ...rows.map((r) => r.duration.length));
+
+  console.log(
+    `${"RUN UID".padEnd(wUid)}  ${"CIRCUIT".padEnd(wCircuit)}  ${"CALLER".padEnd(wCaller)}  ${"STATUS".padEnd(wStatus)}  ${"COST".padEnd(wCost)}  ${"DURATION".padEnd(wDur)}`,
+  );
+  console.log(
+    `${"─".repeat(wUid)}  ${"─".repeat(wCircuit)}  ${"─".repeat(wCaller)}  ${"─".repeat(wStatus)}  ${"─".repeat(wCost)}  ${"─".repeat(wDur)}`,
+  );
+  for (const r of rows) {
+    const statusCol = r.status === "COMPLETED" || r.status === "Completed"
+      ? `${GREEN}${r.status.padEnd(wStatus)}${RESET}`
+      : r.status === "EXCEPTION" || r.status === "FAILED"
+        ? `${RED}${r.status.padEnd(wStatus)}${RESET}`
+        : r.status.padEnd(wStatus);
+    const runUidCol = `${DIM}${r.runUid.padEnd(wUid)}${RESET}`;
+    console.log(
+      `${runUidCol}  ${r.circuit.padEnd(wCircuit)}  ${r.caller.padEnd(wCaller)}  ${statusCol}  ${r.cost.padEnd(wCost)}  ${r.duration.padEnd(wDur)}`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Build the CLI
 // ---------------------------------------------------------------------------
 
@@ -704,6 +797,17 @@ function buildCli(): Command {
     .action(async (args, opts) => {
       requireAuth();
       await cmdAgentLaunch("opencode", args ?? [], opts);
+    });
+
+  // history — list and show circuit run history
+  program
+    .command("history [filter]")
+    .description("Show circuit run history (list, or show a specific run by UID)")
+    .option("--user <name>", "Filter by caller username")
+    .option("--circuit <uid>", "Filter by circuit UID")
+    .action(async (filter, opts) => {
+      requireAuth();
+      await cmdHistory(filter, opts);
     });
 
   // Bare `quack` — launch the default agent.
