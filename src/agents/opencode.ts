@@ -168,6 +168,7 @@ export function buildOpenCodeConfig(
     const provider: OpenCodeProvider = {
       name: "ModelWorks",
       package: OPENAI_COMPATIBLE_PACKAGE,
+      env: ["QUACK_API_KEY"],
       settings: {
         baseURL: `${proxyBase}/api/circuit-adaptors/${entry.sse_adaptor_uid}/query`,
         // Dummy apiKey — the proxy overrides the Authorization header.
@@ -247,6 +248,9 @@ export const opencodeAgent: Agent = {
   async launch(ctx: AgentContext, opts: LaunchOptions): Promise<LaunchResult> {
     // Resolve the opencode binary (prefer V2 for MCP 2.0 support).
     const resolved = resolveOpencodeBinary();
+    if (opts.debug) {
+      console.error(`[quack] resolved opencode binary: ${resolved ? resolved.bin + " (V" + (resolved.isV2 ? "2" : "1") + ")" : "null"}`);
+    }
     if (!opts.print && !resolved) {
       printInstallHint();
       return { exitCode: 1, proxyPort: 0 };
@@ -350,6 +354,7 @@ export const opencodeAgent: Agent = {
       env: {
         ...process.env,
         OPENCODE_CONFIG: configFile,
+        QUACK_API_KEY: "quack",
       },
     });
 

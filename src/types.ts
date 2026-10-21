@@ -216,6 +216,7 @@ export interface OpenCodeMcpServer {
 export interface OpenCodeProvider {
   name: string;
   package: string;
+  env?: string[];
   settings: {
     baseURL: string;
     apiKey?: string;
