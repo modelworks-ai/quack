@@ -24,9 +24,9 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
   return new Promise((resolve, reject) => {
     const server = http.createServer(async (req, res) => {
       const startTime = Date.now();
-      const debugLines: string[] = [];
+      // Flush debug lines immediately so we see them even if the request hangs.
       const debug = (line: string) => {
-        debugLines.push(line);
+        if (opts.onDebug) opts.onDebug(line);
       };
 
       // TCP-level connection log — fires for EVERY request, even before
@@ -38,15 +38,18 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
       try {
         const targetUrl = new URL(req.url ?? "/", opts.apiBase);
 
+        // Debug: log incoming request immediately (before body reading).
+        debug(`=== ${new Date().toISOString()} ===`);
+        debug(`${req.method} ${req.url}`);
+        debug(`→ forwarded to ${targetUrl.href}`);
+        debug(`content-length: ${req.headers["content-length"] ?? "(none)"}`);
+        debug(`transfer-encoding: ${req.headers["transfer-encoding"] ?? "(none)"}`);
+
         // Read the full request body before forwarding (needed for 401 retry).
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(chunk as Buffer);
         const body = chunks.length > 0 ? Buffer.concat(chunks) : null;
-
-        // Debug: log incoming request.
-        debug(`=== ${new Date().toISOString()} ===`);
-        debug(`${req.method} ${req.url}`);
-        debug(`→ forwarded to ${targetUrl.href}`);
+        debug(`body read: ${body ? body.length + " bytes" : "(empty)"}`);
 
         // Build forwarded headers — strip client auth + host, inject our own.
         const headers: Record<string, string> = {};
@@ -139,7 +142,6 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
               debug(debugBody.slice(0, 2000) + (bodyBytes > 2000 ? "..." : ""));
               const totalMs = Date.now() - startTime;
               debug(`=== END ${req.method} ${req.url} ${upstream.status} (${totalMs}ms) ===\n`);
-              if (opts.onDebug) opts.onDebug(debugLines.join("\n"));
             };
             pump();
           } else {
@@ -151,14 +153,12 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
             debug(`--- response body (empty) ---`);
             const totalMs = Date.now() - startTime;
             debug(`=== END ${req.method} ${req.url} ${upstream.status} (${totalMs}ms) ===\n`);
-            opts.onDebug(debugLines.join("\n"));
           }
         }
 
         opts.onLog?.(req.method ?? "?", targetUrl.pathname, upstream.status);
       } catch (err) {
         debug(`--- proxy error: ${(err as Error).message} ---`);
-        if (opts.onDebug) opts.onDebug(debugLines.join("\n"));
         if (!res.headersSent) {
           res.statusCode = 502;
           res.setHeader("content-type", "application/json");
