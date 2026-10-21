@@ -168,10 +168,11 @@ export function buildOpenCodeConfig(
     const provider: OpenCodeProvider = {
       name: "ModelWorks",
       package: OPENAI_COMPATIBLE_PACKAGE,
-      env: ["QUACK_API_KEY"],
       settings: {
         baseURL: `${proxyBase}/api/circuit-adaptors/${entry.sse_adaptor_uid}/query`,
-        // Dummy apiKey — the proxy overrides the Authorization header.
+        // Dummy apiKey — the proxy overrides the Authorization header with the real token.
+        // No `env` field: V2 treats `env`-listed vars as a requirement for provider activation.
+        // Without it, the literal apiKey activates the provider immediately.
         apiKey: "quack",
       },
       models: {
