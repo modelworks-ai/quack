@@ -28,7 +28,7 @@ import type { Agent, AgentContext, LaunchOptions, LaunchResult } from "./types.j
 const AGENT_VERSION = "0.2.0";
 
 /** `npm` package for OpenAI-compatible providers. */
-const OPENAI_COMPATIBLE_NPM = "@ai-sdk/openai-compatible";
+const OPENAI_COMPATIBLE_PACKAGE = "@opencode/ai/providers/openai-compatible";
 
 /** Detect whether a binary is on PATH. */
 function hasBinary(bin: string): boolean {
@@ -154,7 +154,7 @@ export function buildOpenCodeConfig(
         },
       },
     },
-    provider: {},
+    providers: {},
   };
 
   if (defaultModel) {
@@ -166,9 +166,9 @@ export function buildOpenCodeConfig(
 
     const providerKey = `circuit-${entry.circuit_uid}`;
     const provider: OpenCodeProvider = {
-      npm: OPENAI_COMPATIBLE_NPM,
       name: "ModelWorks",
-      options: {
+      package: OPENAI_COMPATIBLE_PACKAGE,
+      settings: {
         baseURL: `${proxyBase}/api/circuit-adaptors/${entry.sse_adaptor_uid}/query`,
         // Dummy apiKey — the proxy overrides the Authorization header.
         apiKey: "quack",
@@ -177,7 +177,7 @@ export function buildOpenCodeConfig(
         [entry.circuit_uid]: { name: `${entry.owner_username}/${entry.circuit_name}` },
       },
     };
-    config.provider![providerKey] = provider;
+    config.providers![providerKey] = provider;
   }
 
   return config;

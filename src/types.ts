@@ -202,7 +202,7 @@ export interface OpenCodeConfig {
   mcp?: {
     servers: Record<string, OpenCodeMcpServer>;
   };
-  provider?: Record<string, OpenCodeProvider>;
+  providers?: Record<string, OpenCodeProvider>;
 }
 
 export interface OpenCodeMcpServer {
@@ -214,9 +214,9 @@ export interface OpenCodeMcpServer {
 }
 
 export interface OpenCodeProvider {
-  npm: string;
   name: string;
-  options: {
+  package: string;
+  settings: {
     baseURL: string;
     apiKey?: string;
   };

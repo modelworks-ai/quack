@@ -53,15 +53,15 @@ test("buildOpenCodeConfig: injects SSE-compatible circuit as provider", () => {
     },
   };
   const config = buildOpenCodeConfig(state, PORT);
-  const provider = config.provider?.["circuit-c-abc"];
+  const provider = config.providers?.["circuit-c-abc"];
   assert.ok(provider, "provider missing");
   assert.equal(provider!.name, "ModelWorks");
-  assert.equal(provider!.npm, "@ai-sdk/openai-compatible");
+  assert.equal(provider!.package, "@opencode/ai/providers/openai-compatible");
   assert.equal(
-    provider!.options.baseURL,
+    provider!.settings.baseURL,
     `${PROXY_BASE}/api/circuit-adaptors/ca-xxx/query`,
   );
-  assert.equal(provider!.options.apiKey, "quack");
+  assert.equal(provider!.settings.apiKey, "quack");
   assert.ok(provider!.models?.["c-abc"], "model entry missing");
   assert.equal(provider!.models!["c-abc"].name, "alice/Test Circuit");
 });
@@ -82,7 +82,7 @@ test("buildOpenCodeConfig: skips non-SSE circuits", () => {
     },
   };
   const config = buildOpenCodeConfig(state, PORT);
-  assert.equal(config.provider?.["circuit-c-abc"], undefined);
+  assert.equal(config.providers?.["circuit-c-abc"], undefined);
 });
 
 test("buildOpenCodeConfig: skips SSE circuit with null adaptor UID", () => {
@@ -101,7 +101,7 @@ test("buildOpenCodeConfig: skips SSE circuit with null adaptor UID", () => {
     },
   };
   const config = buildOpenCodeConfig(state, PORT);
-  assert.equal(config.provider?.["circuit-c-abc"], undefined);
+  assert.equal(config.providers?.["circuit-c-abc"], undefined);
 });
 
 test("buildOpenCodeConfig: injects multiple SSE circuits", () => {
@@ -130,15 +130,15 @@ test("buildOpenCodeConfig: injects multiple SSE circuits", () => {
     },
   };
   const config = buildOpenCodeConfig(state, PORT);
-  assert.ok(config.provider?.["circuit-c-aaa"]);
-  assert.ok(config.provider?.["circuit-c-bbb"]);
+  assert.ok(config.providers?.["circuit-c-aaa"]);
+  assert.ok(config.providers?.["circuit-c-bbb"]);
 });
 
 test("buildOpenCodeConfig: empty state has MCP server but no providers", () => {
   const state: QuackState = { circuits: {} };
   const config = buildOpenCodeConfig(state, PORT);
   assert.ok(config.mcp?.servers?.["ModelWorks x.MCP"]);
-  assert.deepEqual(config.provider, {});
+  assert.deepEqual(config.providers, {});
 });
 
 test("buildOpenCodeConfig: no secrets in the output", () => {
