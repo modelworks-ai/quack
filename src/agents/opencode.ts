@@ -260,9 +260,12 @@ export const opencodeAgent: Agent = {
     // Open debug log file if --debug is set.
     let debugFd: number | undefined;
     let debugPath: string | undefined;
+    const writeDebug = (entry: string) => {
+      if (debugFd !== undefined) {
+        fs.writeSync(debugFd, entry + "\n");
+      }
+    };
     if (opts.debug && !opts.print) {
-      const path = await import("node:path");
-      const fs = await import("node:fs");
       debugPath = path.join(process.cwd(), ".quack", "debug.log");
       // Truncate the file at start.
       try {
@@ -288,11 +291,7 @@ export const opencodeAgent: Agent = {
           }
         : undefined,
       onDebug: opts.debug
-        ? (entry: string) => {
-            if (debugFd !== undefined) {
-              fs.writeSync(debugFd, entry + "\n");
-            }
-          }
+        ? (entry: string) => writeDebug(entry)
         : undefined,
     });
 
@@ -346,10 +345,27 @@ export const opencodeAgent: Agent = {
     );
     fs.writeFileSync(configFile, configJson);
 
+    // Write startup info to the debug log.
     // Spawn opencode with the config file path injected via env.
     // V2 uses a background service — pass --standalone so it runs a private
     // server that picks up OPENCODE_CONFIG fresh every launch.
     const spawnArgs = resolved?.isV2 ? ["--standalone", ...opts.args] : opts.args;
+
+    if (opts.debug) {
+      writeDebug(`=== quack startup ${new Date().toISOString()} ===`);
+      writeDebug(`quack PID: ${process.pid}`);
+      writeDebug(`opencode binary: ${resolved!.bin} (V${resolved?.isV2 ? "2" : "1"})`);
+      writeDebug(`spawn args: ${JSON.stringify(spawnArgs)}`);
+      writeDebug(`config file: ${configFile}`);
+      writeDebug(`config:\n${configJson}`);
+      writeDebug("");
+    }
+
+    if (opts.debug || opts.verbose) {
+      console.error(`[quack] spawning opencode: ${resolved!.bin} ${spawnArgs.join(" ")}`);
+      console.error(`[quack] OPENCODE_CONFIG: ${configFile}`);
+      console.error(`[quack] quack PID: ${process.pid}`);
+    }
     const child = spawn(resolved!.bin, spawnArgs, {
       stdio: "inherit",
       env: {
@@ -358,6 +374,13 @@ export const opencodeAgent: Agent = {
         QUACK_API_KEY: "quack",
       },
     });
+
+    // Log the opencode PID once it spawns.
+    if (opts.debug || opts.verbose) {
+      child.on("spawn", () => {
+        console.error(`[quack] opencode PID: ${child.pid}`);
+      });
+    }
 
     // Forward signals to opencode.
     const forwardSignal = (sig: NodeJS.Signals) => {
