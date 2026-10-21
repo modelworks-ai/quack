@@ -5,3 +5,4 @@ dist-test/
 .DS_Store
 *.tgz
 src/build-info.json
+.npmrc
