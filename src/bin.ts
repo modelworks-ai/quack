@@ -742,7 +742,7 @@ async function cmdHistory(filter: string | undefined, opts: { user?: string; cir
         : r.status;
     return {
       runUid: r.run_uid,
-      circuit: r.circuit_name,
+      circuit: `${r.owner_username}/${r.circuit_name}`,
       caller: r.caller_username,
       status: statusCol,
       cost: r.cost_credits !== null ? String(r.cost_credits) : "—",
