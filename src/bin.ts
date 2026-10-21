@@ -45,6 +45,120 @@ function stripAnsi(s: string): string {
   return s.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
+// ---------------------------------------------------------------------------
+// Table printing helper — dynamic column widths based on terminal width
+// ---------------------------------------------------------------------------
+
+export interface TableColumn {
+  /** Column header text. */
+  header: string;
+  /** Cell values, one per row. */
+  values: string[];
+  /**
+   * Can this column be truncated with `…` when the terminal is too narrow?
+   * Defaults to `false` — only columns marked `true` are shrunk.
+   * Typically used for long UID columns.
+   */
+  truncatable?: boolean;
+  /**
+   * Minimum visible width when truncating (default 10).
+   * Truncated values get `…` appended, so this includes the ellipsis.
+   */
+  minWidth?: number;
+}
+
+/**
+ * Print a formatted table with dynamic column widths that fit the terminal.
+ *
+ * Natural widths are computed from header + values (measuring visible
+ * text, ignoring ANSI codes). If the total fits in the terminal, natural
+ * widths are used (no truncation). If it overflows, truncatable columns
+ * are shrunk (with `…`) until it fits; non-truncatable columns keep their
+ * natural width.
+ *
+ * When `process.stdout` is not a TTY (piped), defaults to 80 columns.
+ */
+export function printTable(columns: TableColumn[]): void {
+  const termWidth = process.stdout.columns ?? 80;
+  const gap = 2; // spaces between columns
+  const numCols = columns.length;
+  const totalGap = (numCols - 1) * gap;
+
+  // Natural width per column: max(header, longest value), measured without ANSI.
+  const naturalWidths = columns.map((col) => {
+    const valMax = col.values.length > 0
+      ? Math.max(...col.values.map((v) => stripAnsi(v).length))
+      : 0;
+    return Math.max(col.header.length, valMax);
+  });
+
+  const totalNatural = naturalWidths.reduce((a, b) => a + b, 0) + totalGap;
+
+  let widths = [...naturalWidths];
+
+  if (totalNatural > termWidth) {
+    // Shrink truncatable columns first, starting from the last truncatable
+    // column (rightmost — typically the less-important UIDs).
+    let deficit = totalNatural - termWidth;
+    const truncatableIndices = columns
+      .map((c, i) => (c.truncatable ? i : -1))
+      .filter((i) => i >= 0)
+      .reverse(); // shrink rightmost truncatable first
+
+    for (const idx of truncatableIndices) {
+      if (deficit <= 0) break;
+      const minW = columns[idx].minWidth ?? 10;
+      const available = widths[idx] - minW;
+      if (available > 0) {
+        const shrink = Math.min(available, deficit);
+        widths[idx] -= shrink;
+        deficit -= shrink;
+      }
+    }
+  }
+
+  /** Truncate a string to `maxLen` visible chars, appending `…`. */
+  const truncate = (s: string, maxLen: number): string => {
+    const plain = stripAnsi(s);
+    if (plain.length <= maxLen) return s;
+    // Preserve ANSI if present — truncate the visible text only.
+    const cut = maxLen - 1; // leave room for …
+    // For simplicity: strip ANSI, truncate, don't re-apply (UIDs have no color).
+    return plain.slice(0, cut) + "…";
+  };
+
+  // Build header row.
+  const headerRow = columns
+    .map((col, i) => {
+      const w = widths[i];
+      return stripAnsi(col.header).length > w
+        ? truncate(col.header, w).padEnd(w)
+        : col.header.padEnd(w);
+    })
+    .join("  ");
+
+  const separator = widths.map((w) => "─".repeat(w)).join("  ");
+
+  console.log(headerRow);
+  console.log(separator);
+
+  // Data rows.
+  const numRows = Math.max(...columns.map((c) => c.values.length));
+  for (let row = 0; row < numRows; row++) {
+    const cells = columns.map((col, i) => {
+      const w = widths[i];
+      const val = col.values[row] ?? "";
+      const plainLen = stripAnsi(val).length;
+      if (plainLen > w) {
+        return truncate(val, w).padEnd(w);
+      }
+      // Preserve ANSI — pad based on visible length.
+      return val + " ".repeat(w - plainLen);
+    });
+    console.log(cells.join("  "));
+  }
+}
+
 /** Resolve the effective API base from env or stored credentials. */
 function effectiveApiBase(): string {
   return getApiBase(loadCredentials());
@@ -161,36 +275,27 @@ async function cmdCircuitList(opts: { long?: boolean }): Promise<void> {
     }
   }
 
-  // Column width helpers (strip ANSI to measure visible text).
-  const wName = Math.max("NAME".length, ...rows.map((r) => stripAnsi(r.name).length));
-  const wSse = Math.max("SSE".length, ...rows.map((r) => stripAnsi(r.sse).length));
-  const wAdapter = Math.max("ADAPTER".length, ...rows.map((r) => stripAnsi(r.adapter).length));
-  const wAdaptorUid = Math.max("ADAPTOR UID".length, ...rows.map((r) => stripAnsi(r.adaptorUid).length));
-  const wVersion = Math.max("VERSION UID".length, ...rows.map((r) => stripAnsi(r.versionUid).length));
-
-  // Header + separator.
-  const header = `${"NAME".padEnd(wName)}  ${"SSE".padEnd(wSse)}  ${"ADAPTER".padEnd(wAdapter)}  ${"ADAPTOR UID".padEnd(wAdaptorUid)}  ${"VERSION UID".padEnd(wVersion)}`;
+  // Build columns for printTable.
+  const columns: TableColumn[] = [
+    { header: "NAME", values: rows.map((r) => r.name) },
+    { header: "SSE", values: rows.map((r) => r.sse) },
+    { header: "ADAPTER", values: rows.map((r) => r.adapter) },
+    { header: "ADAPTOR UID", values: rows.map((r) => r.adaptorUid), truncatable: true },
+    {
+      header: "VERSION UID",
+      values: rows.map((r) => r.versionUid ? `${DIM}${r.versionUid}${RESET}` : ""),
+      truncatable: true,
+    },
+  ];
   if (long) {
-    const wCircuit = Math.max("CIRCUIT UID".length, ...rows.map((r) => stripAnsi(r.circuitUid).length));
-    console.log(`${header}  ${"CIRCUIT UID".padEnd(wCircuit)}`);
-    console.log(`${"─".repeat(wName)}  ${"─".repeat(wSse)}  ${"─".repeat(wAdapter)}  ${"─".repeat(wAdaptorUid)}  ${"─".repeat(wVersion)}  ${"─".repeat(wCircuit)}`);
-  } else {
-    console.log(header);
-    console.log(`${"─".repeat(wName)}  ${"─".repeat(wSse)}  ${"─".repeat(wAdapter)}  ${"─".repeat(wAdaptorUid)}  ${"─".repeat(wVersion)}`);
+    columns.push({
+      header: "CIRCUIT UID",
+      values: rows.map((r) => r.circuitUid ? `${DIM}${r.circuitUid}${RESET}` : ""),
+      truncatable: true,
+    });
   }
 
-  // Data rows.
-  for (const r of rows) {
-    const versionCell = r.versionUid ? `${DIM}${r.versionUid.padEnd(wVersion)}${RESET}` : "".padEnd(wVersion);
-    const base = `${r.name.padEnd(wName)}  ${stripAnsi(r.sse).padEnd(wSse)}  ${r.adapter.padEnd(wAdapter)}  ${r.adaptorUid.padEnd(wAdaptorUid)}  ${versionCell}`;
-    if (long) {
-      const wCircuit = Math.max("CIRCUIT UID".length, ...rows.map((r) => stripAnsi(r.circuitUid).length));
-      const circuitCell = r.circuitUid ? `${DIM}${r.circuitUid.padEnd(wCircuit)}${RESET}` : "".padEnd(wCircuit);
-      console.log(`${base}  ${circuitCell}`);
-    } else {
-      console.log(base);
-    }
-  }
+  printTable(columns);
 }
 
 async function cmdCircuitAdd(url: string): Promise<void> {
@@ -627,39 +732,32 @@ async function cmdHistory(filter: string | undefined, opts: { user?: string; cir
   }
 
   // Table: RUN UID, CIRCUIT, CALLER, STATUS, COST, DURATION
-  const rows = records.map((r) => ({
-    runUid: r.run_uid.length > 20 ? r.run_uid.slice(0, 20) + "…" : r.run_uid,
-    circuit: r.circuit_name,
-    caller: r.caller_username,
-    status: r.status,
-    cost: r.cost_credits !== null ? String(r.cost_credits) : "—",
-    duration: r.duration_ms !== null ? (r.duration_ms / 1000).toFixed(1) + "s" : "—",
-  }));
+  const rows = records.map((r) => {
+    const isCompleted = r.status === "COMPLETED" || r.status === "Completed";
+    const isFailed = r.status === "EXCEPTION" || r.status === "FAILED";
+    const statusCol = isCompleted
+      ? `${GREEN}${r.status}${RESET}`
+      : isFailed
+        ? `${RED}${r.status}${RESET}`
+        : r.status;
+    return {
+      runUid: r.run_uid,
+      circuit: r.circuit_name,
+      caller: r.caller_username,
+      status: statusCol,
+      cost: r.cost_credits !== null ? String(r.cost_credits) : "—",
+      duration: r.duration_ms !== null ? (r.duration_ms / 1000).toFixed(1) + "s" : "—",
+    };
+  });
 
-  const wUid = Math.max("RUN UID".length, ...rows.map((r) => r.runUid.length));
-  const wCircuit = Math.max("CIRCUIT".length, ...rows.map((r) => r.circuit.length));
-  const wCaller = Math.max("CALLER".length, ...rows.map((r) => r.caller.length));
-  const wStatus = Math.max("STATUS".length, ...rows.map((r) => r.status.length));
-  const wCost = Math.max("COST".length, ...rows.map((r) => r.cost.length));
-  const wDur = Math.max("DURATION".length, ...rows.map((r) => r.duration.length));
-
-  console.log(
-    `${"RUN UID".padEnd(wUid)}  ${"CIRCUIT".padEnd(wCircuit)}  ${"CALLER".padEnd(wCaller)}  ${"STATUS".padEnd(wStatus)}  ${"COST".padEnd(wCost)}  ${"DURATION".padEnd(wDur)}`,
-  );
-  console.log(
-    `${"─".repeat(wUid)}  ${"─".repeat(wCircuit)}  ${"─".repeat(wCaller)}  ${"─".repeat(wStatus)}  ${"─".repeat(wCost)}  ${"─".repeat(wDur)}`,
-  );
-  for (const r of rows) {
-    const statusCol = r.status === "COMPLETED" || r.status === "Completed"
-      ? `${GREEN}${r.status.padEnd(wStatus)}${RESET}`
-      : r.status === "EXCEPTION" || r.status === "FAILED"
-        ? `${RED}${r.status.padEnd(wStatus)}${RESET}`
-        : r.status.padEnd(wStatus);
-    const runUidCol = `${DIM}${r.runUid.padEnd(wUid)}${RESET}`;
-    console.log(
-      `${runUidCol}  ${r.circuit.padEnd(wCircuit)}  ${r.caller.padEnd(wCaller)}  ${statusCol}  ${r.cost.padEnd(wCost)}  ${r.duration.padEnd(wDur)}`,
-    );
-  }
+  printTable([
+    { header: "RUN UID", values: rows.map((r) => `${DIM}${r.runUid}${RESET}`), truncatable: true },
+    { header: "CIRCUIT", values: rows.map((r) => r.circuit) },
+    { header: "CALLER", values: rows.map((r) => r.caller) },
+    { header: "STATUS", values: rows.map((r) => r.status) },
+    { header: "COST", values: rows.map((r) => r.cost) },
+    { header: "DURATION", values: rows.map((r) => r.duration) },
+  ]);
 }
 
 // ---------------------------------------------------------------------------
