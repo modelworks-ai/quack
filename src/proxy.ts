@@ -23,6 +23,12 @@ import type { ProxyHandle, ProxyOptions } from "./types.js";
 export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
   return new Promise((resolve, reject) => {
     const server = http.createServer(async (req, res) => {
+      const startTime = Date.now();
+      const debugLines: string[] = [];
+      const debug = (line: string) => {
+        debugLines.push(line);
+      };
+
       try {
         const targetUrl = new URL(req.url ?? "/", opts.apiBase);
 
@@ -30,6 +36,11 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(chunk as Buffer);
         const body = chunks.length > 0 ? Buffer.concat(chunks) : null;
+
+        // Debug: log incoming request.
+        debug(`=== ${new Date().toISOString()} ===`);
+        debug(`${req.method} ${req.url}`);
+        debug(`→ forwarded to ${targetUrl.href}`);
 
         // Build forwarded headers — strip client auth + host, inject our own.
         const headers: Record<string, string> = {};
@@ -41,6 +52,20 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
         headers.authorization = `Bearer ${opts.getAccessToken()}`;
         headers.host = targetUrl.host;
 
+        if (opts.onDebug) {
+          debug(`--- request headers (incoming) ---`);
+          for (const [k, v] of Object.entries(req.headers)) {
+            const val = Array.isArray(v) ? v.join(", ") : v ?? "";
+            // Mask the real token in the debug log.
+            const masked = k.toLowerCase() === "authorization"
+              ? `Bearer ${val.slice(7, 12)}...`
+              : val;
+            debug(`  ${k}: ${masked}`);
+          }
+          debug(`--- request body ---`);
+          debug(body ? body.toString("utf8").slice(0, 2000) : "(empty)");
+        }
+
         // Forward request.
         let upstream = await fetch(targetUrl, {
           method: req.method,
@@ -50,6 +75,7 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
 
         // Token refresh on 401 — retry once.
         if (upstream.status === 401) {
+          debug(`--- 401 received, refreshing token and retrying ---`);
           const refreshed = await opts.refreshToken();
           if (refreshed) {
             headers.authorization = `Bearer ${opts.getAccessToken()}`;
@@ -67,18 +93,66 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
           res.setHeader(key, value);
         }
 
+        if (opts.onDebug) {
+          const elapsed = Date.now() - startTime;
+          debug(`--- response ${upstream.status} (${elapsed}ms) ---`);
+          debug(`--- response headers ---`);
+          for (const [k, v] of upstream.headers) {
+            debug(`  ${k}: ${v}`);
+          }
+        }
+
         // Stream the response body (SSE, NDJSON, JSON).
         // Cast: `@types/node`'s `Readable.fromWeb` and the global
         // `ReadableStream` from `fetch` have structurally incompatible
         // `pipeThrough` types. Runtime is correct.
         if (upstream.body) {
-          Readable.fromWeb(upstream.body as never).pipe(res);
+          if (opts.onDebug) {
+            // Capture streamed body for debug logging.
+            let bodyBytes = 0;
+            const decoder = new TextDecoder();
+            let debugBody = "";
+            const reader = upstream.body.getReader();
+            const pump = async () => {
+              try {
+                for (;;) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  bodyBytes += value.length;
+                  if (debugBody.length < 2000) {
+                    debugBody += decoder.decode(value, { stream: true });
+                  }
+                  res.write(value);
+                }
+                res.end();
+              } catch (err) {
+                debug(`--- stream error: ${(err as Error).message} ---`);
+                if (!res.writableEnded) res.end();
+              }
+              debug(`--- response body (${bodyBytes} bytes) ---`);
+              debug(debugBody.slice(0, 2000) + (bodyBytes > 2000 ? "..." : ""));
+              const totalMs = Date.now() - startTime;
+              debug(`=== END ${req.method} ${req.url} ${upstream.status} (${totalMs}ms) ===\n`);
+              if (opts.onDebug) opts.onDebug(debugLines.join("\n"));
+            };
+            pump();
+          } else {
+            Readable.fromWeb(upstream.body as never).pipe(res);
+          }
         } else {
           res.end();
+          if (opts.onDebug) {
+            debug(`--- response body (empty) ---`);
+            const totalMs = Date.now() - startTime;
+            debug(`=== END ${req.method} ${req.url} ${upstream.status} (${totalMs}ms) ===\n`);
+            opts.onDebug(debugLines.join("\n"));
+          }
         }
 
         opts.onLog?.(req.method ?? "?", targetUrl.pathname, upstream.status);
       } catch (err) {
+        debug(`--- proxy error: ${(err as Error).message} ---`);
+        if (opts.onDebug) opts.onDebug(debugLines.join("\n"));
         if (!res.headersSent) {
           res.statusCode = 502;
           res.setHeader("content-type", "application/json");

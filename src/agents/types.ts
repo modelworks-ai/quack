@@ -31,6 +31,8 @@ export interface LaunchOptions {
   args: string[];
   /** If true, log proxy requests to stderr. */
   verbose: boolean;
+  /** If true, log full proxy request/response details to .quack/debug.log. */
+  debug: boolean;
   /** If true, print the config and exit without launching. */
   print: boolean;
 }

@@ -186,6 +186,8 @@ export interface ProxyOptions {
   refreshToken: () => Promise<boolean>;
   /** Optional request logger for `--verbose`. */
   onLog?: (method: string, path: string, status: number) => void;
+  /** Optional debug logger — full request/response details to a string sink. */
+  onDebug?: (entry: string) => void;
 }
 
 /**

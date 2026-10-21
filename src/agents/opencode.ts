@@ -252,19 +252,46 @@ export const opencodeAgent: Agent = {
       return { exitCode: 1, proxyPort: 0 };
     }
 
+    // Open debug log file if --debug is set.
+    let debugFd: number | undefined;
+    let debugPath: string | undefined;
+    if (opts.debug && !opts.print) {
+      const path = await import("node:path");
+      const fs = await import("node:fs");
+      debugPath = path.join(process.cwd(), ".quack", "debug.log");
+      // Truncate the file at start.
+      try {
+        fs.writeFileSync(debugPath, "");
+        debugFd = fs.openSync(debugPath, "a");
+      } catch {
+        // If .quack/ doesn't exist, fall back to /tmp.
+        debugPath = `/tmp/quack-debug-${Date.now()}.log`;
+        fs.writeFileSync(debugPath, "");
+        debugFd = fs.openSync(debugPath, "a");
+      }
+      process.stderr.write(`[quack] debug log: ${debugPath}\n`);
+    }
+
     // Start the proxy.
     const proxy: ProxyHandle = await startProxy({
       apiBase: ctx.apiBase,
       getAccessToken: ctx.getAccessToken,
       refreshToken,
-      onLog: opts.verbose
+      onLog: (opts.verbose || opts.debug)
         ? (method, path, status) => {
             process.stderr.write(`[quack] ${method} ${path} → ${status}\n`);
           }
         : undefined,
+      onDebug: opts.debug
+        ? (entry: string) => {
+            if (debugFd !== undefined) {
+              fs.writeSync(debugFd, entry + "\n");
+            }
+          }
+        : undefined,
     });
 
-    if (opts.verbose) {
+    if (opts.verbose || opts.debug) {
       process.stderr.write(
         `[quack] proxy listening on http://localhost:${proxy.port} → ${ctx.apiBase}\n`,
       );
@@ -356,6 +383,16 @@ export const opencodeAgent: Agent = {
     }
 
     proxy.close();
+
+    // Close debug log file if open.
+    if (debugFd !== undefined) {
+      try {
+        fs.closeSync(debugFd);
+      } catch {
+        // Ignore.
+      }
+    }
+
     return { exitCode, proxyPort: proxy.port };
   },
 };

@@ -432,7 +432,7 @@ async function pickAgentInteractive(): Promise<string | null> {
 // Bare `quack` — launch the default agent
 // ---------------------------------------------------------------------------
 
-async function cmdQuack(opts: { verbose?: boolean }): Promise<void> {
+async function cmdQuack(opts: { verbose?: boolean; debug?: boolean }): Promise<void> {
   if (!isQuackProject()) {
     console.error("Not a quack project. Run `quack init` first.");
     process.exit(1);
@@ -497,6 +497,7 @@ async function cmdQuack(opts: { verbose?: boolean }): Promise<void> {
   const launchResult = await agent.launch(ctx, {
     args: [],
     verbose: opts.verbose ?? false,
+    debug: opts.debug ?? false,
     print: false,
   });
 
@@ -513,7 +514,7 @@ async function cmdQuack(opts: { verbose?: boolean }): Promise<void> {
 // Agent launch (quack opencode / quack <agent>)
 // ---------------------------------------------------------------------------
 
-async function cmdAgentLaunch(agentName: string, args: string[], opts: { print?: boolean; verbose?: boolean }): Promise<void> {
+async function cmdAgentLaunch(agentName: string, args: string[], opts: { print?: boolean; verbose?: boolean; debug?: boolean }): Promise<void> {
   const agent = getAgent(agentName);
   if (!agent) {
     console.error(`Unknown agent: ${agentName}`);
@@ -557,6 +558,7 @@ async function cmdAgentLaunch(agentName: string, args: string[], opts: { print?:
   const result = await agent.launch(ctx, {
     args: passThrough,
     verbose: opts.verbose ?? false,
+    debug: opts.debug ?? false,
     print: opts.print ?? false,
   });
 
@@ -578,6 +580,7 @@ function buildCli(): Command {
     .version(VERSION, "-v, --version")
     .option("--api-base <url>", "Override API base URL")
     .option("--verbose", "Verbose output (proxy request logging)")
+    .option("--debug", "Debug mode (full proxy request/response logging to .quack/debug.log)")
     .helpOption("-h, --help", "Show help");
 
   // init
