@@ -168,11 +168,10 @@ export function buildOpenCodeConfig(
     const provider: OpenCodeProvider = {
       name: "ModelWorks",
       package: OPENAI_COMPATIBLE_PACKAGE,
+      env: ["QUACK_API_KEY"],
       settings: {
         baseURL: `${proxyBase}/api/circuit-adaptors/${entry.sse_adaptor_uid}/query`,
         // Dummy apiKey — the proxy overrides the Authorization header with the real token.
-        // No `env` field: V2 treats `env`-listed vars as a requirement for provider activation.
-        // Without it, the literal apiKey activates the provider immediately.
         apiKey: "quack",
       },
       models: {
@@ -371,6 +370,9 @@ export const opencodeAgent: Agent = {
       env: {
         ...process.env,
         OPENCODE_CONFIG: configFile,
+        // Clear any inherited OPENCODE_CONFIG_CONTENT from the user's shell
+        // (e.g. from oc.sh wrapper) — it would override our model setting.
+        OPENCODE_CONFIG_CONTENT: "",
         QUACK_API_KEY: "quack",
       },
     });
