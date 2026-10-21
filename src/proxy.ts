@@ -29,6 +29,12 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
         debugLines.push(line);
       };
 
+      // TCP-level connection log — fires for EVERY request, even before
+      // HTTP parsing. This tells us if the request reached the proxy at all.
+      if (opts.onDebug) {
+        opts.onDebug(`[tcp] connection: ${req.method} ${req.url} from ${req.socket.remoteAddress}:${req.socket.remotePort}`);
+      }
+
       try {
         const targetUrl = new URL(req.url ?? "/", opts.apiBase);
 

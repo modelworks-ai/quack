@@ -28,6 +28,8 @@ import {
 } from "./project.js";
 
 const VERSION = "0.2.0";
+import buildInfo from "./build-info.json" with { type: "json" };
+const BUILD_ID = `${VERSION}+${buildInfo.build} (${buildInfo.commit}${buildInfo.dirty ? "-dirty" : ""})`;
 
 // ANSI colors for status indicators.
 const GREEN = "\x1b[32m";
@@ -577,7 +579,7 @@ function buildCli(): Command {
   program
     .name("quack")
     .description("Launch AI coding agents with ModelWorks circuits")
-    .version(VERSION, "-v, --version")
+    .version(BUILD_ID, "-v, --version")
     .option("--api-base <url>", "Override API base URL")
     .option("--verbose", "Verbose output (proxy request logging)")
     .option("--debug", "Debug mode (full proxy request/response logging to .quack/debug.log)")

@@ -10,8 +10,9 @@
     "node": ">=18"
   },
   "scripts": {
+    "prebuild": "node scripts/build-info.mjs",
     "build": "tsc",
-    "prepublishOnly": "tsc",
+    "prepublishOnly": "node scripts/build-info.mjs && tsc",
     "dev": "tsc --watch",
     "test": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
     "test:run": "node --test dist-test/test/*.test.js"

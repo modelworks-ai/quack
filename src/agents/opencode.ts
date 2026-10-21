@@ -26,6 +26,8 @@ import type { Agent, AgentContext, LaunchOptions, LaunchResult } from "./types.j
 
 /** Quack version (kept in sync with package.json). */
 const AGENT_VERSION = "0.2.0";
+import buildInfo from "../build-info.json" with { type: "json" };
+const AGENT_BUILD = `${AGENT_VERSION}+${buildInfo.build} (${buildInfo.commit}${buildInfo.dirty ? "-dirty" : ""})`;
 
 /** `npm` package for OpenAI-compatible providers. */
 const OPENAI_COMPATIBLE_PACKAGE = "@opencode/ai/providers/openai-compatible";
@@ -347,10 +349,13 @@ export const opencodeAgent: Agent = {
     // Spawn opencode with the config file path injected via env.
     // V2 uses a background service — pass --standalone so it runs a private
     // server that picks up OPENCODE_CONFIG fresh every launch.
-    const spawnArgs = resolved?.isV2 ? ["--standalone", ...opts.args] : opts.args;
+    const spawnArgs = resolved?.isV2
+      ? ["--standalone", "--log-level", "debug", ...opts.args]
+      : ["--log-level", "debug", ...opts.args];
 
     if (opts.debug) {
       writeDebug(`=== quack startup ${new Date().toISOString()} ===`);
+      writeDebug(`quack version: ${AGENT_BUILD}`);
       writeDebug(`quack PID: ${process.pid}`);
       writeDebug(`opencode binary: ${resolved!.bin} (V${resolved?.isV2 ? "2" : "1"})`);
       writeDebug(`spawn args: ${JSON.stringify(spawnArgs)}`);
