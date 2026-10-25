@@ -28,8 +28,8 @@ import {
 } from "./project.js";
 import { listRunRecords, getRunRecord } from "./history.js";
 
-const VERSION = "0.2.0";
 import buildInfo from "./build-info.json" with { type: "json" };
+const VERSION = buildInfo.version;
 const BUILD_ID = `${VERSION}+${buildInfo.build} (${buildInfo.commit}${buildInfo.dirty ? "-dirty" : ""})`;
 
 // ANSI colors for status indicators.
