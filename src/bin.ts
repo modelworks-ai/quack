@@ -225,8 +225,14 @@ async function cmdCircuitList(opts: { long?: boolean }): Promise<void> {
   const rows: Row[] = [];
   for (const entry of config.circuits) {
     const isDefault = config.default_circuit === entry.circuit_uid;
-    const displayName = isDefault ? `${entry.name} *` : entry.name;
     const s = state.circuits[entry.circuit_uid];
+    // Show the owner in the NAME column as `<username>/<circuit_name>` when
+    // synced (matches `quack history` and the /:username/:circuitName slug).
+    // The not-synced branch has no owner_username and falls back to the name.
+    const baseName = s?.owner_username
+      ? `${s.owner_username}/${entry.name}`
+      : entry.name;
+    const displayName = isDefault ? `${baseName} *` : baseName;
     if (!s) {
       rows.push({
         name: displayName,
