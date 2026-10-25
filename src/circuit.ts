@@ -24,7 +24,6 @@ import type {
   CircuitPublic,
   CircuitStateEntry,
   CircuitVersionPublic,
-  CreateCircuitAdaptorBody,
   ParsedCircuitRef,
 } from "./types.js";
 
@@ -204,6 +203,16 @@ export async function getCircuit(
   return unwrap<CircuitPublic>(await parseJson(res));
 }
 
+/** Fetch a user's username by UID (`GET /users/<uid>`). */
+export async function getUsername(
+  apiBase: string,
+  userUid: string,
+): Promise<string> {
+  const res = await authedFetch(apiBase, `/api/users/${userUid}`);
+  const payload = await parseJson<{ username?: string }>(res);
+  return unwrap<{ username?: string }>(payload).username ?? "unknown";
+}
+
 /**
  * Resolve a circuit reference to a RUNNING version.
  *
@@ -317,64 +326,24 @@ export function isSseCompatible(adapters: string[]): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Find an existing `OpenAiSse` adaptor owned by the caller, or create one.
+ * Find the **public** (system-created) `OPEN_AI_SSE` adaptor for a circuit version.
  *
- * Returns the adaptor UID (`ca-xxx`), or `null` if the circuit isn't
- * SSE-compatible.
+ * When a circuit version is uploaded, the system creates public adaptors from
+ * the circuit file's `adapters` array. These have `user_uid: null` and require
+ * Bearer auth (the proxy injects it). We use these instead of creating temporal
+ * adaptors — no per-user adaptor lifecycle needed.
  *
- * If `determined` is false (couldn't read `json_blob` and no existing
- * adaptors to infer from), try creating an SSE adaptor anyway —
- * `can_create_circuit_adaptor` doesn't validate `adapter_type`, so
- * creation always succeeds. Runtime validation (`validate_openai_query`)
- * is the safety net for circuits that don't actually support SSE.
- *
- * Note: the `adapters` parameter uses circuit-definition format
- * (`"OPEN_AI_SSE"`), but the API uses PascalCase (`"OpenAiSse"`).
+ * Returns the adaptor UID (`ca-xxx`), or `null` if no public SSE adaptor exists.
  */
-export async function ensureSseAdaptor(
+export async function findPublicSseAdaptor(
   apiBase: string,
   versionUid: string,
-  adapters: string[],
-  determined: boolean,
 ): Promise<string | null> {
-  // If we could determine adapters and SSE isn't supported, skip.
-  if (determined && !isSseCompatible(adapters)) return null;
-
-  // If undetermined, try anyway — creation succeeds, runtime validates.
-
-  const apiAdapterType = toApiAdapterType(OPEN_AI_SSE);
   const existing = await listAdaptors(apiBase, versionUid);
   const found = existing.find(
-    (a) => a.adapter_type === apiAdapterType,
+    (a) => fromApiAdapterType(a.adapter_type) === OPEN_AI_SSE && a.user_uid === null,
   );
-  if (found) return found.uid;
-
-  // Create a new temporal SSE adaptor.
-  const body: CreateCircuitAdaptorBody = {
-    circuit_version_uid: versionUid,
-    adapter_type: apiAdapterType,
-  };
-  const res = await authedFetch(apiBase, "/api/circuit-adaptors", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const adaptor = unwrap<CircuitAdaptorPublic>(await parseJson(res));
-  return adaptor.uid;
-}
-
-/** Delete a circuit adaptor by UID (`DELETE /circuit-adaptors/<uid>`). */
-export async function deleteAdaptor(
-  apiBase: string,
-  adaptorUid: string,
-): Promise<void> {
-  const res = await authedFetch(apiBase, `/api/circuit-adaptors/${adaptorUid}`, {
-    method: "DELETE",
-  });
-  // 404 is fine — already deleted.
-  if (!res.ok && res.status !== 404) {
-    await parseJson<unknown>(res);
-  }
+  return found?.uid ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -401,13 +370,28 @@ export async function addCircuit(input: string, apiBase: string): Promise<AddRes
   const ref = parseCircuitRef(input);
   const { circuit, version } = await resolveRunningVersion(apiBase, ref);
   const { adapters, determined } = await discoverAdapters(version, apiBase);
-  const sse_adaptor_uid = await ensureSseAdaptor(apiBase, version.uid, adapters, determined);
 
-  // If we created an SSE adaptor despite not being able to determine
+  // List existing adaptors (public, system-created — user_uid: null).
+  const existingAdaptors = await listAdaptors(apiBase, version.uid);
+  const publicAdaptors = existingAdaptors.filter((a) => a.user_uid === null);
+
+  // Build adaptor_uids map from public adaptors only.
+  const adaptor_uids: Record<string, string> = {};
+  for (const a of publicAdaptors) {
+    adaptor_uids[fromApiAdapterType(a.adapter_type)] = a.uid;
+  }
+
+  // Find the public OPEN_AI_SSE adaptor (no temporal creation).
+  const sse_adaptor_uid = await findPublicSseAdaptor(apiBase, version.uid);
+
+  // If we found an SSE adaptor despite not being able to determine
   // adapters, mark SSE-compatible in state (unverified).
   const effectiveAdapters = determined
     ? adapters
     : (sse_adaptor_uid ? [OPEN_AI_SSE, ...adapters] : adapters);
+
+  // Fetch the circuit owner's username for display (`<username>/<circuit_name>`).
+  const owner_username = await getUsername(apiBase, circuit.user_uid);
 
   // Config entry (committable).
   const now = new Date().toISOString();
@@ -423,8 +407,10 @@ export async function addCircuit(input: string, apiBase: string): Promise<AddRes
     circuit_uid: circuit.uid,
     version_uid: version.uid,
     circuit_name: circuit.name,
+    owner_username,
     adapters: effectiveAdapters,
     sse_adaptor_uid,
+    adaptor_uids,
     resolved_at: now,
   };
 
@@ -452,11 +438,14 @@ export async function addCircuit(input: string, apiBase: string): Promise<AddRes
   };
 }
 
-/** `quack rm <circuit-uid|url>` — delete adaptor, remove from config + state. */
+/**
+ * `quack circuit remove <circuit-uid|url>` — remove from config + state.
+ *
+ * Public adaptors are NOT deleted — they belong to the circuit (system-created),
+ * not to the quack user. Other users of the same circuit rely on them.
+ */
 export async function removeCircuit(
   input: string,
-  apiBase: string,
-  keepAdaptors = false,
 ): Promise<{ circuit_uid: string; name: string }> {
   const ref = parseCircuitRef(input);
   const circuitUid = ref.circuit_uid;
@@ -466,14 +455,6 @@ export async function removeCircuit(
   const entry = config.circuits.find((c) => c.circuit_uid === circuitUid);
   if (!entry) {
     throw new Error(`Circuit ${circuitUid} is not in this project.`);
-  }
-
-  // Delete the SSE adaptor on the server.
-  if (!keepAdaptors) {
-    const state = getCircuitState(circuitUid);
-    if (state?.sse_adaptor_uid) {
-      await deleteAdaptor(apiBase, state.sse_adaptor_uid);
-    }
   }
 
   removeCircuitFromConfig(circuitUid);

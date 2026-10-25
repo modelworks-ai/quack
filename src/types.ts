@@ -58,6 +58,8 @@ export interface CircuitStateEntry {
   /** The RUNNING version resolved at add/refresh time. */
   version_uid: string;
   circuit_name: string;
+  /** Owner's username (e.g. `alice`), for display as `<username>/<circuit_name>`. */
+  owner_username: string;
   /**
    * Adapter types the circuit supports, e.g.
    * `["OPEN_AI_SSE", "MODELWORKS_HTTP", "MCP"]`.
@@ -72,6 +74,13 @@ export interface CircuitStateEntry {
    * for this circuit, or `null` if the circuit isn't SSE-compatible.
    */
   sse_adaptor_uid: string | null;
+  /**
+   * Map of adapter type → adaptor UID (`ca-xxx`) for each temporal
+   * adaptor quack created. Currently only `OPEN_AI_SSE` is created
+   * by quack, but existing adaptors discovered via the list endpoint
+   * are also stored here.
+   */
+  adaptor_uids: Record<string, string>;
   /** ISO 8601 timestamp of the last resolution. */
   resolved_at: string;
 }
@@ -81,6 +90,19 @@ export interface CircuitStateEntry {
  */
 export interface QuackConfig {
   version: number;
+  /**
+   * Agent to launch when the user runs bare `quack` (no args).
+   * Optional — if absent, the fallback chain (last_agent →
+   * interactive pick → error) resolves the agent.
+   */
+  default_agent?: string;
+  /**
+   * Circuit UID (`c-xxx`) to use as the default model in OpenCode.
+   * Team-shared — committed to `config.json`. Set via `quack circuit use`
+   * or auto-set to the first SSE-compatible circuit on `quack circuit add`.
+   * At launch, resolved to an OpenCode model ID and injected as `model`.
+   */
+  default_circuit?: string;
   circuits: CircuitConfigEntry[];
 }
 
@@ -89,6 +111,12 @@ export interface QuackConfig {
  */
 export interface QuackState {
   circuits: Record<string, CircuitStateEntry>;
+  /**
+   * The last agent successfully launched by bare `quack`.
+   * Per-user convenience — used as a fallback when
+   * `default_agent` is not set in config.json.
+   */
+  last_agent?: string;
 }
 
 /**
@@ -139,11 +167,25 @@ export interface CircuitAdaptorPublic {
 }
 
 /**
- * Request body for `POST /circuit-adaptors`.
+ * A circuit run record stored locally at `.quack/runs/cr-xxx.json`.
+ *
+ * Committed to the repo (team-shared). Contains only public metadata —
+ * no request body, no response body, nothing sensitive.
  */
-export interface CreateCircuitAdaptorBody {
-  circuit_version_uid: string;
-  adapter_type: string;
+export interface RunRecord {
+  run_uid: string;
+  circuit_uid: string;
+  circuit_name: string;
+  owner_username: string;
+  caller_username: string;
+  version_uid: string;
+  status: string;
+  created_at: string;
+  completed_at: string;
+  duration_ms: number | null;
+  cost_credits: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
 }
 
 /**
@@ -166,6 +208,14 @@ export interface ProxyOptions {
   refreshToken: () => Promise<boolean>;
   /** Optional request logger for `--verbose`. */
   onLog?: (method: string, path: string, status: number) => void;
+  /** Optional debug logger — full request/response details to a string sink. */
+  onDebug?: (entry: string) => void;
+  /**
+   * Called after a response stream completes, if the response included
+   * an `X-Circuit-Run-Uid` header. Fire-and-forget — the proxy does not
+   * await this. Used to fetch and save the run record locally.
+   */
+  onRunComplete?: (runUid: string) => void;
 }
 
 /**
@@ -175,24 +225,27 @@ export interface ProxyOptions {
  */
 export interface OpenCodeConfig {
   $schema?: string;
+  /** Default model ID, e.g. `circuit-wandb-glm-52/wandb-glm-52`. */
+  model?: string;
   mcp?: {
     servers: Record<string, OpenCodeMcpServer>;
   };
-  provider?: Record<string, OpenCodeProvider>;
+  providers?: Record<string, OpenCodeProvider>;
 }
 
 export interface OpenCodeMcpServer {
   type: "remote";
   url: string;
   oauth: false;
-  protocol: "auto";
+  protocol: "auto" | "2026-07-28" | "legacy";
   headers?: Record<string, string>;
 }
 
 export interface OpenCodeProvider {
-  npm: string;
   name: string;
-  options: {
+  package: string;
+  env?: string[];
+  settings: {
     baseURL: string;
     apiKey?: string;
   };

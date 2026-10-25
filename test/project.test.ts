@@ -35,7 +35,8 @@ test("initProject: creates .quack/ with config, state, .gitignore", () => {
     assert.ok(fs.existsSync(".quack/config.json"));
     assert.ok(fs.existsSync(".quack/state.json"));
     assert.ok(fs.existsSync(".quack/.gitignore"));
-    assert.equal(fs.readFileSync(".quack/.gitignore", "utf8").trim(), "state.json");
+    assert.ok(fs.existsSync(".quack/runs"));
+    assert.equal(fs.readFileSync(".quack/.gitignore", "utf8").trim(), "state.json\ndebug.log");
   } finally {
     cleanup();
   }
@@ -206,8 +207,10 @@ const sampleState: CircuitStateEntry = {
   circuit_uid: "c-test",
   version_uid: "cv-test",
   circuit_name: "Test Circuit",
+        owner_username: "alice",
   adapters: ["OPEN_AI_SSE"],
   sse_adaptor_uid: "ca-test",
+  adaptor_uids: { OPEN_AI_SSE: "ca-test" },
   resolved_at: "2026-01-01T00:00:00Z",
 };
 
@@ -233,6 +236,7 @@ test("upsertCircuitState: replaces existing entry", () => {
     const updated: CircuitStateEntry = {
       ...sampleState,
       sse_adaptor_uid: "ca-different",
+  adaptor_uids: { OPEN_AI_SSE: "ca-different" },
     };
     upsertCircuitState(updated);
     const s = getCircuitState("c-test");

@@ -1,7 +1,7 @@
 {
   "name": "@modelworks/quack",
-  "version": "0.1.0",
-  "description": "Git-like authenticated circuit launcher for ModelWorks with a local proxy.",
+  "version": "0.2.7",
+  "description": "Launch AI coding agents (OpenCode, and more) with ModelWorks circuits as model providers. OAuth login, local proxy with auth injection, run history, and git-like project config.",
   "type": "module",
   "bin": {
     "quack": "dist/bin.js"
@@ -10,15 +10,16 @@
     "node": ">=18"
   },
   "scripts": {
+    "prebuild": "node scripts/build-info.mjs",
     "build": "tsc",
-    "prepublishOnly": "tsc",
+    "prepublishOnly": "node scripts/build-info.mjs && tsc",
     "dev": "tsc --watch",
     "test": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
     "test:run": "node --test dist-test/test/*.test.js"
   },
   "devDependencies": {
-    "typescript": "^5.5.0",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.20.5",
+    "typescript": "^5.5.0"
   },
   "files": [
     "dist"
@@ -27,6 +28,16 @@
     "access": "public"
   },
   "license": "MIT",
+  "keywords": [
+    "modelworks",
+    "opencode",
+    "ai",
+    "circuit",
+    "proxy",
+    "mcp",
+    "cli",
+    "launcher"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/modelworks-ai/quack.git"
@@ -34,5 +45,8 @@
   "homepage": "https://github.com/modelworks-ai/quack",
   "bugs": {
     "url": "https://github.com/modelworks-ai/quack/issues"
+  },
+  "dependencies": {
+    "commander": "^15.0.0"
   }
 }

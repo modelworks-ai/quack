@@ -6,15 +6,34 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { refreshToken } from "../auth.js";
-import { readState } from "../project.js";
+import { loadCredentials } from "../auth.js";
+import { readState, readConfig } from "../project.js";
 import { startProxy } from "../proxy.js";
-import type { ProxyHandle, QuackState, CircuitStateEntry } from "../types.js";
+import { fetchRunFromApi, saveRunRecord } from "../history.js";
+import type { Credentials } from "../types.js";
+import type {
+  ProxyHandle,
+  QuackConfig,
+  QuackState,
+  CircuitStateEntry,
+  OpenCodeConfig,
+  OpenCodeMcpServer,
+  OpenCodeProvider,
+} from "../types.js";
 import type { Agent, AgentContext, LaunchOptions, LaunchResult } from "./types.js";
 
+/** Quack version (kept in sync with package.json). */
+const AGENT_VERSION = "0.2.0";
+import buildInfo from "../build-info.json" with { type: "json" };
+const AGENT_BUILD = `${AGENT_VERSION}+${buildInfo.build} (${buildInfo.commit}${buildInfo.dirty ? "-dirty" : ""})`;
+
 /** `npm` package for OpenAI-compatible providers. */
-const OPENAI_COMPATIBLE_NPM = "@ai-sdk/openai-compatible";
+const OPENAI_COMPATIBLE_PACKAGE = "@opencode/ai/providers/openai-compatible";
 
 /** Detect whether a binary is on PATH. */
 function hasBinary(bin: string): boolean {
@@ -25,6 +44,27 @@ function hasBinary(bin: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Check if a file exists and is executable at a specific path. */
+function hasBinaryAt(binPath: string): boolean {
+  try {
+    fs.accessSync(binPath, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Resolve the opencode binary: prefer V2 (MCP 2.0 support), fall back to V1. */
+function resolveOpencodeBinary(): { bin: string; isV2: boolean } | null {
+  // V2: on PATH as "opencode2", or at ~/.opencode/bin/opencode2
+  if (hasBinary("opencode2")) return { bin: "opencode2", isV2: true };
+  const v2Path = path.join(os.homedir(), ".opencode", "bin", "opencode2");
+  if (hasBinaryAt(v2Path)) return { bin: v2Path, isV2: true };
+  // V1: on PATH as "opencode"
+  if (hasBinary("opencode")) return { bin: "opencode", isV2: false };
+  return null;
 }
 
 /** Install methods for opencode, in priority order. */
@@ -42,67 +82,119 @@ function isInjectableSseCircuit(entry: CircuitStateEntry): boolean {
   );
 }
 
-/** OpenCode config shape (subset of the full schema). */
-interface OpenCodeConfig {
-  $schema: string;
-  mcp: {
-    servers: Record<string, {
-      type: "remote";
-      url: string;
-      oauth: boolean;
-      protocol: "auto";
-    }>;
-  };
-  provider?: Record<string, unknown>;
+/**
+ * Resolve which circuit to use as the default OpenCode model.
+ *
+ * Resolution order:
+ * 1. `config.default_circuit` if it's SSE-compatible and injected
+ * 2. First injectable SSE circuit in state (fallback, not persisted)
+ * 3. `null` — no default model injected
+ *
+ * Prints a warning to stderr if `default_circuit` is stale (not in the
+ * circuits array) or not SSE-compatible.
+ *
+ * @returns the OpenCode model ID (`circuit-<uid>/<uid>`) or `null`.
+ */
+export function resolveDefaultModel(
+  config: QuackConfig,
+  state: QuackState,
+): string | null {
+  const injectedCircuits = Object.values(state.circuits).filter(
+    isInjectableSseCircuit,
+  );
+  if (injectedCircuits.length === 0) return null;
+
+  const configured = config.default_circuit;
+  if (configured) {
+    // Check the circuit exists in the config's circuits array.
+    const inConfig = config.circuits.some(
+      (c) => c.circuit_uid === configured,
+    );
+    if (!inConfig) {
+      console.error(
+        `⚠ default_circuit '${configured}' not found in circuits — using ${injectedCircuits[0].circuit_name} as default`,
+      );
+    } else {
+      const entry = state.circuits[configured];
+      if (entry && isInjectableSseCircuit(entry)) {
+        return `circuit-${configured}/${configured}`;
+      }
+      console.error(
+        `⚠ default_circuit '${configured}' is not SSE-compatible — using ${injectedCircuits[0].circuit_name} as default`,
+      );
+    }
+  }
+
+  // Fallback: first injectable SSE circuit.
+  const first = injectedCircuits[0];
+  return `circuit-${first.circuit_uid}/${first.circuit_uid}`;
 }
 
 /** Build the OpenCode config from project state. */
-function buildOpenCodeConfig(state: QuackState, port: number): OpenCodeConfig {
+export function buildOpenCodeConfig(
+  state: QuackState,
+  port: number,
+  defaultModel?: string | null,
+): OpenCodeConfig {
   const proxyBase = `http://localhost:${port}`;
 
   const config: OpenCodeConfig = {
     $schema: "https://opencode.ai/config.json",
     mcp: {
       servers: {
-        modelworks: {
+        "ModelWorks x.MCP": {
           type: "remote",
           url: `${proxyBase}/api/x.mcp`,
           oauth: false,
-          protocol: "auto",
+          // x.mcp requires MCP 2.0 (server/discover) and rejects the
+          // legacy initialize handshake. "auto" probes then falls back
+          // to legacy, which gets rejected — so force 2026-07-28.
+          protocol: "2026-07-28",
+          // Dummy auth header — the proxy overrides it with the real
+          // Bearer token. Without this, OpenCode sees no auth config and
+          // prompts the user to authenticate ("MCP Authentication Required").
+          headers: {
+            Authorization: "Bearer quack",
+          },
         },
       },
     },
-    provider: {},
+    providers: {},
   };
+
+  if (defaultModel) {
+    config.model = defaultModel;
+  }
 
   for (const entry of Object.values(state.circuits)) {
     if (!isInjectableSseCircuit(entry)) continue;
 
     const providerKey = `circuit-${entry.circuit_uid}`;
-    (config.provider as Record<string, unknown>)[providerKey] = {
-      npm: OPENAI_COMPATIBLE_NPM,
-      name: entry.circuit_name,
-      options: {
+    const provider: OpenCodeProvider = {
+      name: "ModelWorks",
+      package: OPENAI_COMPATIBLE_PACKAGE,
+      settings: {
         baseURL: `${proxyBase}/api/circuit-adaptors/${entry.sse_adaptor_uid}/query`,
-        // Dummy apiKey — the proxy overrides the Authorization header.
+        // Dummy apiKey — the proxy overrides the Authorization header with the real token.
         apiKey: "quack",
       },
       models: {
-        [entry.circuit_uid]: { name: entry.circuit_name },
+        [entry.circuit_uid]: { name: `${entry.owner_username}/${entry.circuit_name}` },
       },
     };
+    config.providers![providerKey] = provider;
   }
 
   return config;
 }
 
 /** Describe the injection decision for `--print` output. */
-interface InjectionSummary {
+export interface InjectionSummary {
   injected: Array<{ circuit_uid: string; name: string; sse_adaptor_uid: string }>;
   skipped: Array<{ circuit_uid: string; name: string; reason: string }>;
 }
 
-function summarizeInjection(state: QuackState): InjectionSummary {
+export function summarizeInjection(state: QuackState): InjectionSummary {
   const injected: InjectionSummary["injected"] = [];
   const skipped: InjectionSummary["skipped"] = [];
 
@@ -142,6 +234,27 @@ function printInstallHint(): void {
   console.error("");
 }
 
+/** Load credentials for the history callback. Returns null if not logged in. */
+function loadCredentialsForHistory(): Credentials | null {
+  return loadCredentials();
+}
+
+/** Resolve the caller's username from the API (for run history records). */
+async function resolveCallerUsername(creds: Credentials): Promise<string> {
+  try {
+    const res = await fetch(`${creds.api_base}/api/users/token`, {
+      headers: { Authorization: `Bearer ${creds.access_token}` },
+    });
+    if (res.ok) {
+      const body = (await res.json()) as { payload?: { username?: string } };
+      return body.payload?.username ?? creds.user_uid;
+    }
+  } catch {
+    // Fall back to user_uid.
+  }
+  return creds.user_uid;
+}
+
 /** The OpenCode agent plugin. */
 export const opencodeAgent: Agent = {
   name: "opencode",
@@ -150,17 +263,45 @@ export const opencodeAgent: Agent = {
   installHints: OPENCODE_INSTALL.map((m) => `${m.label}: ${m.cmd}`),
 
   buildConfig(ctx: AgentContext): Record<string, string> {
-    const config = buildOpenCodeConfig(ctx.state, ctx.proxyPort);
+    const defaultModel = resolveDefaultModel(ctx.config, ctx.state);
+    const config = buildOpenCodeConfig(ctx.state, ctx.proxyPort, defaultModel);
     return {
-      OPENCODE_CONFIG_CONTENT: JSON.stringify(config, null, 2),
+      OPENCODE_CONFIG: JSON.stringify(config, null, 2),
     };
   },
 
   async launch(ctx: AgentContext, opts: LaunchOptions): Promise<LaunchResult> {
-    // Check the binary before doing anything else.
-    if (!opts.print && !hasBinary("opencode")) {
+    // Resolve the opencode binary (prefer V2 for MCP 2.0 support).
+    const resolved = resolveOpencodeBinary();
+    if (opts.debug) {
+      console.error(`[quack] resolved opencode binary: ${resolved ? resolved.bin + " (V" + (resolved.isV2 ? "2" : "1") + ")" : "null"}`);
+    }
+    if (!opts.print && !resolved) {
       printInstallHint();
       return { exitCode: 1, proxyPort: 0 };
+    }
+
+    // Open debug log file if --debug is set.
+    let debugFd: number | undefined;
+    let debugPath: string | undefined;
+    const writeDebug = (entry: string) => {
+      if (debugFd !== undefined) {
+        fs.writeSync(debugFd, entry + "\n");
+      }
+    };
+    if (opts.debug && !opts.print) {
+      debugPath = path.join(process.cwd(), ".quack", "debug.log");
+      // Truncate the file at start.
+      try {
+        fs.writeFileSync(debugPath, "");
+        debugFd = fs.openSync(debugPath, "a");
+      } catch {
+        // If .quack/ doesn't exist, fall back to /tmp.
+        debugPath = `/tmp/quack-debug-${Date.now()}.log`;
+        fs.writeFileSync(debugPath, "");
+        debugFd = fs.openSync(debugPath, "a");
+      }
+      process.stderr.write(`[quack] debug log: ${debugPath}\n`);
     }
 
     // Start the proxy.
@@ -168,14 +309,40 @@ export const opencodeAgent: Agent = {
       apiBase: ctx.apiBase,
       getAccessToken: ctx.getAccessToken,
       refreshToken,
-      onLog: opts.verbose
+      onLog: (opts.verbose || opts.debug)
         ? (method, path, status) => {
             process.stderr.write(`[quack] ${method} ${path} → ${status}\n`);
           }
         : undefined,
+      onDebug: opts.debug
+        ? (entry: string) => writeDebug(entry)
+        : undefined,
+      // Fire-and-forget: fetch and save run records after each stream completes.
+      onRunComplete: opts.print
+        ? undefined
+        : (runUid: string) => {
+            // Don't block the proxy — fire and forget.
+            void (async () => {
+              try {
+                const creds = loadCredentialsForHistory();
+                if (!creds) return;
+                const currentState = readState();
+                const callerUsername = await resolveCallerUsername(creds);
+                const record = await fetchRunFromApi(
+                  runUid,
+                  creds,
+                  currentState.circuits,
+                  callerUsername,
+                );
+                if (record) saveRunRecord(record);
+              } catch {
+                // Silent — don't crash the proxy on history save failures.
+              }
+            })();
+          },
     });
 
-    if (opts.verbose) {
+    if (opts.verbose || opts.debug) {
       process.stderr.write(
         `[quack] proxy listening on http://localhost:${proxy.port} → ${ctx.apiBase}\n`,
       );
@@ -183,14 +350,16 @@ export const opencodeAgent: Agent = {
 
     // Build the config.
     const state = readState();
-    const config = buildOpenCodeConfig(state, proxy.port);
-    const configJson = JSON.stringify(config, null, 2);
+    const config = readConfig();
+    const defaultModel = resolveDefaultModel(config, state);
+    const openCodeConfig = buildOpenCodeConfig(state, proxy.port, defaultModel);
+    const configJson = JSON.stringify(openCodeConfig, null, 2);
     const summary = summarizeInjection(state);
 
     if (opts.print) {
       console.log(`Proxy: http://localhost:${proxy.port} → ${ctx.apiBase}`);
       console.log("");
-      console.log("Injected OpenCode config (OPENCODE_CONFIG_CONTENT):");
+      console.log("Injected OpenCode config (OPENCODE_CONFIG):");
       console.log(configJson);
       console.log("");
       console.log(
@@ -209,14 +378,62 @@ export const opencodeAgent: Agent = {
       return { exitCode: null, proxyPort: proxy.port };
     }
 
-    // Spawn opencode with the config injected via env.
-    const child = spawn("opencode", opts.args, {
+    // Write the config to a temp file and point OPENCODE_CONFIG at it.
+    // V1's OPENCODE_CONFIG_CONTENT (inline JSON) works for simple top-level
+    // overrides like `model`, but doesn't reliably deep-merge `mcp.servers`.
+    // OPENCODE_CONFIG (file path, "custom-path" scope) is what the user's
+    // own wrapper uses for full configs with MCP servers.
+    //
+    // The filename includes the quack version + timestamp to avoid any
+    // config caching by file path.
+    const configFile = path.join(
+      os.tmpdir(),
+      `quack-opencode-config-v${AGENT_VERSION}-${Date.now()}-${proxy.port}.json`,
+    );
+    fs.writeFileSync(configFile, configJson);
+
+    // Write startup info to the debug log.
+    // Spawn opencode with the config file path injected via env.
+    // V2 uses a background service — pass --standalone so it runs a private
+    // server that picks up OPENCODE_CONFIG fresh every launch.
+    const spawnArgs = resolved?.isV2
+      ? ["--standalone", "--log-level", "debug", ...opts.args]
+      : ["--log-level", "debug", ...opts.args];
+
+    if (opts.debug) {
+      writeDebug(`=== quack startup ${new Date().toISOString()} ===`);
+      writeDebug(`quack version: ${AGENT_BUILD}`);
+      writeDebug(`quack PID: ${process.pid}`);
+      writeDebug(`opencode binary: ${resolved!.bin} (V${resolved?.isV2 ? "2" : "1"})`);
+      writeDebug(`spawn args: ${JSON.stringify(spawnArgs)}`);
+      writeDebug(`config file: ${configFile}`);
+      writeDebug(`config:\n${configJson}`);
+      writeDebug("");
+    }
+
+    if (opts.debug || opts.verbose) {
+      console.error(`[quack] spawning opencode: ${resolved!.bin} ${spawnArgs.join(" ")}`);
+      console.error(`[quack] OPENCODE_CONFIG: ${configFile}`);
+      console.error(`[quack] quack PID: ${process.pid}`);
+    }
+    const child = spawn(resolved!.bin, spawnArgs, {
       stdio: "inherit",
       env: {
         ...process.env,
-        OPENCODE_CONFIG_CONTENT: configJson,
+        OPENCODE_CONFIG: configFile,
+        // Clear any inherited OPENCODE_CONFIG_CONTENT from the user's shell
+        // (e.g. from oc.sh wrapper) — it would override our model setting.
+        OPENCODE_CONFIG_CONTENT: "",
+        QUACK_API_KEY: "quack",
       },
     });
+
+    // Log the opencode PID once it spawns.
+    if (opts.debug || opts.verbose) {
+      child.on("spawn", () => {
+        console.error(`[quack] opencode PID: ${child.pid}`);
+      });
+    }
 
     // Forward signals to opencode.
     const forwardSignal = (sig: NodeJS.Signals) => {
@@ -240,7 +457,24 @@ export const opencodeAgent: Agent = {
       });
     });
 
+    // Clean up the temp config file.
+    try {
+      fs.unlinkSync(configFile);
+    } catch {
+      // Ignore cleanup errors.
+    }
+
     proxy.close();
+
+    // Close debug log file if open.
+    if (debugFd !== undefined) {
+      try {
+        fs.closeSync(debugFd);
+      } catch {
+        // Ignore.
+      }
+    }
+
     return { exitCode, proxyPort: proxy.port };
   },
 };

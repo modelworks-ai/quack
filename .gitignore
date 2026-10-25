@@ -3,3 +3,6 @@ dist/
 dist-test/
 *.log
 .DS_Store
+*.tgz
+src/build-info.json
+.npmrc
