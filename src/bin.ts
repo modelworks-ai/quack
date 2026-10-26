@@ -510,6 +510,20 @@ async function cmdAgentDescribe(name: string): Promise<void> {
   }
 }
 
+async function cmdAgentSet(name: string): Promise<void> {
+  const agent = getAgent(name);
+  if (!agent) {
+    console.error(`Unknown agent: ${name}`);
+    console.error("Run `quack agent list` to see available agents.");
+    process.exit(1);
+  }
+  requireQuackProject();
+  const config = readConfig();
+  config.default_agent = name;
+  writeConfig(config);
+  console.log(`Default agent set to ${GREEN}${name}${RESET}.`);
+}
+
 // ---------------------------------------------------------------------------
 // Interactive picker
 // ---------------------------------------------------------------------------
@@ -863,6 +877,13 @@ function buildCli(): Command {
     .description("Show details about a specific agent")
     .action(async (name) => {
       await cmdAgentDescribe(name);
+    });
+
+  agent
+    .command("set <name>")
+    .description("Set the default agent (written to .quack/config.json)")
+    .action(async (name) => {
+      await cmdAgentSet(name);
     });
 
   // auth group
