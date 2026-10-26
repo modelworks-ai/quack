@@ -27,9 +27,8 @@ import type {
 } from "../types.js";
 import type { Agent, AgentContext, LaunchOptions, LaunchResult } from "./types.js";
 
-/** Quack version (kept in sync with package.json). */
-const AGENT_VERSION = "0.2.0";
 import buildInfo from "../build-info.json" with { type: "json" };
+const AGENT_VERSION = buildInfo.version;
 const AGENT_BUILD = `${AGENT_VERSION}+${buildInfo.build} (${buildInfo.commit}${buildInfo.dirty ? "-dirty" : ""})`;
 
 /** `npm` package for OpenAI-compatible providers. */

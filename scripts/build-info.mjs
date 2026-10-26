@@ -8,7 +8,7 @@
  * @module
  */
 
-import { writeFileSync } from "node:fs";
+import { writeFileSync, readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,8 +45,14 @@ const commit = gitCommit();
 const commitLong = gitCommitLong();
 const dirty = gitDirty();
 
+// Read the version from package.json so the build-time version never drifts
+// from the npm package version (previously hardcoded here, causing
+// `quack --version` to report a stale value).
+const pkgPath = resolve(__dirname, "..", "package.json");
+const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+
 const info = {
-  version: "0.2.0",
+  version: pkg.version,
   build: buildNumber,
   commit,
   commitLong,
