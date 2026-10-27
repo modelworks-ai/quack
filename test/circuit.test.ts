@@ -23,6 +23,7 @@ test("parseCircuitRef: full circuit URL", () => {
   const ref = parseCircuitRef("https://modelworks.ai/circuits/c-abc123");
   assert.equal(ref.circuit_uid, "c-abc123");
   assert.equal(ref.version_uid, null);
+  assert.equal(ref.slug, null);
 });
 
 test("parseCircuitRef: circuit URL with version", () => {
@@ -31,24 +32,28 @@ test("parseCircuitRef: circuit URL with version", () => {
   );
   assert.equal(ref.circuit_uid, "c-abc123");
   assert.equal(ref.version_uid, "cv-def456");
+  assert.equal(ref.slug, null);
 });
 
 test("parseCircuitRef: bare circuit UID", () => {
   const ref = parseCircuitRef("c-abc123");
   assert.equal(ref.circuit_uid, "c-abc123");
   assert.equal(ref.version_uid, null);
+  assert.equal(ref.slug, null);
 });
 
 test("parseCircuitRef: bare version UID", () => {
   const ref = parseCircuitRef("cv-def456");
   assert.equal(ref.circuit_uid, "");
   assert.equal(ref.version_uid, "cv-def456");
+  assert.equal(ref.slug, null);
 });
 
 test("parseCircuitRef: URL with trailing slash", () => {
   const ref = parseCircuitRef("https://modelworks.ai/circuits/c-abc123/");
   assert.equal(ref.circuit_uid, "c-abc123");
   assert.equal(ref.version_uid, null);
+  assert.equal(ref.slug, null);
 });
 
 test("parseCircuitRef: URL with query params", () => {
@@ -56,6 +61,32 @@ test("parseCircuitRef: URL with query params", () => {
     "https://modelworks.ai/circuits/c-abc123?tab=overview",
   );
   assert.equal(ref.circuit_uid, "c-abc123");
+});
+
+test("parseCircuitRef: slug URL", () => {
+  const ref = parseCircuitRef("https://modelworks.ai/openscale/deepseek-v41-flash");
+  assert.equal(ref.circuit_uid, "");
+  assert.equal(ref.version_uid, null);
+  assert.equal(ref.slug, "openscale/deepseek-v41-flash");
+});
+
+test("parseCircuitRef: slug URL with trailing slash", () => {
+  const ref = parseCircuitRef("https://modelworks.ai/openscale/deepseek-v41-flash/");
+  assert.equal(ref.slug, "openscale/deepseek-v41-flash");
+});
+
+test("parseCircuitRef: slug URL with query params", () => {
+  const ref = parseCircuitRef(
+    "https://modelworks.ai/openscale/deepseek-v41-flash?tab=overview",
+  );
+  assert.equal(ref.slug, "openscale/deepseek-v41-flash");
+});
+
+test("parseCircuitRef: slug URL with hash fragment", () => {
+  const ref = parseCircuitRef(
+    "https://modelworks.ai/openscale/deepseek-v41-flash#section",
+  );
+  assert.equal(ref.slug, "openscale/deepseek-v41-flash");
 });
 
 test("parseCircuitRef: rejects invalid input", () => {

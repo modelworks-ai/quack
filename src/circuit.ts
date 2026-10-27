@@ -86,16 +86,17 @@ export function fromApiAdapterType(apiType: string): string {
  * Accepts:
  * - `https://modelworks.ai/circuits/<circuit_uid>`
  * - `https://modelworks.ai/circuits/<circuit_uid>/versions/<version_uid>`
+ * - `https://modelworks.ai/<username>/<circuitName>` (slug-based URL)
  * - `<circuit_uid>` or `c-xxx`
  * - `<version_uid>` or `cv-xxx`
  */
 export function parseCircuitRef(input: string): ParsedCircuitRef {
   // Bare UIDs first.
   if (input.startsWith("cv-")) {
-    return { circuit_uid: "", version_uid: input };
+    return { circuit_uid: "", version_uid: input, slug: null };
   }
   if (input.startsWith("c-")) {
-    return { circuit_uid: input, version_uid: null };
+    return { circuit_uid: input, version_uid: null, slug: null };
   }
 
   // URLs.
@@ -104,16 +105,23 @@ export function parseCircuitRef(input: string): ParsedCircuitRef {
     const parts = url.pathname.split("/").filter(Boolean);
     // Expected: ["circuits", "<circuit_uid>"] or ["circuits", "<circuit_uid>", "versions", "<version_uid>"]
     const circuitsIdx = parts.indexOf("circuits");
-    if (circuitsIdx === -1 || circuitsIdx + 1 >= parts.length) {
-      throw new Error(`Could not find circuit UID in URL: ${input}`);
+    if (circuitsIdx !== -1 && circuitsIdx + 1 < parts.length) {
+      const circuit_uid = parts[circuitsIdx + 1];
+      let version_uid: string | null = null;
+      const versionsIdx = parts.indexOf("versions", circuitsIdx);
+      if (versionsIdx !== -1 && versionsIdx + 1 < parts.length) {
+        version_uid = parts[versionsIdx + 1];
+      }
+      return { circuit_uid, version_uid, slug: null };
     }
-    const circuit_uid = parts[circuitsIdx + 1];
-    let version_uid: string | null = null;
-    const versionsIdx = parts.indexOf("versions", circuitsIdx);
-    if (versionsIdx !== -1 && versionsIdx + 1 < parts.length) {
-      version_uid = parts[versionsIdx + 1];
+
+    // Slug-based URL: ["<username>", "<circuitName>"]
+    if (parts.length === 2) {
+      const slug = `${parts[0]}/${parts[1]}`;
+      return { circuit_uid: "", version_uid: null, slug };
     }
-    return { circuit_uid, version_uid };
+
+    throw new Error(`Could not find circuit UID in URL: ${input}`);
   } catch (err) {
     throw new Error(
       `Invalid circuit reference: ${input}. Use a circuit URL, c-xxx, or cv-xxx. (${
@@ -213,6 +221,21 @@ export async function getUsername(
   return unwrap<{ username?: string }>(payload).username ?? "unknown";
 }
 
+/** Resolve a slug (`"username/circuitName"`) to a circuit UID via the API. */
+async function resolveSlug(apiBase: string, slug: string): Promise<string> {
+  const res = await authedFetch(apiBase, `/api/slug/${slug}`);
+  const data = unwrap<{ entity_type: string; entity_uid: string }>(
+    await parseJson(res),
+  );
+  if (data.entity_type !== "circuit") {
+    throw new Error(
+      `'${slug}' resolved to a ${data.entity_type}, not a circuit. ` +
+        `Use a circuit URL, c-xxx, or cv-xxx.`,
+    );
+  }
+  return data.entity_uid;
+}
+
 /**
  * Resolve a circuit reference to a RUNNING version.
  *
@@ -225,6 +248,12 @@ export async function resolveRunningVersion(
   ref: ParsedCircuitRef,
 ): Promise<{ circuit: CircuitPublic; version: CircuitVersionPublic }> {
   let circuitUid = ref.circuit_uid;
+
+  // Slug-based URL (e.g. https://modelworks.ai/openscale/deepseek-v41-flash):
+  // resolve the slug to a circuit UID via the API before proceeding.
+  if (!circuitUid && ref.slug) {
+    circuitUid = await resolveSlug(apiBase, ref.slug);
+  }
 
   // If only a version UID was given, fetch the version first to discover
   // its parent circuit UID.
@@ -446,12 +475,29 @@ export async function addCircuit(input: string, apiBase: string): Promise<AddRes
  */
 export async function removeCircuit(
   input: string,
+  apiBase: string,
 ): Promise<{ circuit_uid: string; name: string }> {
   const ref = parseCircuitRef(input);
-  const circuitUid = ref.circuit_uid;
+  let circuitUid = ref.circuit_uid;
+
+  const config = readConfig();
+
+  // For slug-based URLs, try matching by the stored `url` first (no API call).
+  // If that fails, resolve the slug via the API to get the circuit UID.
+  if (ref.slug && !circuitUid) {
+    const byUrl = config.circuits.find((c) => c.url === input);
+    if (byUrl) {
+      circuitUid = byUrl.circuit_uid;
+    } else {
+      circuitUid = await resolveSlug(apiBase, ref.slug);
+    }
+  }
+
+  if (!circuitUid) {
+    throw new Error("Could not resolve circuit UID from the given reference.");
+  }
 
   // Find the circuit name from config.
-  const config = readConfig();
   const entry = config.circuits.find((c) => c.circuit_uid === circuitUid);
   if (!entry) {
     throw new Error(`Circuit ${circuitUid} is not in this project.`);

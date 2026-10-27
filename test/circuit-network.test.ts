@@ -184,6 +184,81 @@ test("addCircuit: reports already-added when in config", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// addCircuit with slug-based URLs
+// ---------------------------------------------------------------------------
+
+test("addCircuit: slug URL resolves via /api/slug", async () => {
+  const { cleanup: cleanupDir } = withTempDir();
+  const { cleanup: cleanupConfig } = withTempConfigHome();
+  try {
+    fs.mkdirSync(".quack", { recursive: true });
+    fs.writeFileSync(".quack/config.json", JSON.stringify({ version: 1, circuits: [] }));
+    fs.writeFileSync(".quack/state.json", JSON.stringify({ circuits: {} }));
+    writeCredentials(API_BASE);
+
+    const { cleanup: cleanupFetch } = mockFetch({
+      "GET /api/slug/openscale/deepseek-v41-flash": {
+        json: {
+          status: "success",
+          payload: { entity_type: "circuit", entity_uid: "c-test", user_uid: "usr-test" },
+        },
+      },
+      ...SSE_CIRCUIT_RESPONSES,
+      ...PUBLIC_SSE_ADAPTOR,
+    });
+
+    try {
+      const result = await addCircuit(
+        "https://modelworks.ai/openscale/deepseek-v41-flash",
+        API_BASE,
+      );
+      assert.equal(result.circuit_uid, "c-test");
+      assert.equal(result.version_uid, "cv-test");
+      assert.equal(result.name, "Test Circuit");
+      assert.equal(result.sse_compatible, true);
+      assert.equal(result.added, true);
+    } finally {
+      cleanupFetch();
+    }
+  } finally {
+    cleanupConfig();
+    cleanupDir();
+  }
+});
+
+test("addCircuit: slug URL resolving to non-circuit throws", async () => {
+  const { cleanup: cleanupDir } = withTempDir();
+  const { cleanup: cleanupConfig } = withTempConfigHome();
+  try {
+    fs.mkdirSync(".quack", { recursive: true });
+    fs.writeFileSync(".quack/config.json", JSON.stringify({ version: 1, circuits: [] }));
+    fs.writeFileSync(".quack/state.json", JSON.stringify({ circuits: {} }));
+    writeCredentials(API_BASE);
+
+    const { cleanup: cleanupFetch } = mockFetch({
+      "GET /api/slug/openscale/my-board": {
+        json: {
+          status: "success",
+          payload: { entity_type: "circuit_board", entity_uid: "cb-test", user_uid: "usr-test" },
+        },
+      },
+    });
+
+    try {
+      await assert.rejects(
+        addCircuit("https://modelworks.ai/openscale/my-board", API_BASE),
+        /not a circuit/,
+      );
+    } finally {
+      cleanupFetch();
+    }
+  } finally {
+    cleanupConfig();
+    cleanupDir();
+  }
+});
+
+// ---------------------------------------------------------------------------
 // removeCircuit
 // ---------------------------------------------------------------------------
 
@@ -229,7 +304,7 @@ test("removeCircuit: removes from config/state (no adaptor deletion)", async () 
     const { cleanup: cleanupFetch, calls } = mockFetch({});
 
     try {
-      const result = await removeCircuit("c-test");
+      const result = await removeCircuit("c-test", API_BASE);
       assert.equal(result.circuit_uid, "c-test");
       assert.equal(result.name, "Test Circuit");
       // No API calls should be made — public adaptors are not deleted
@@ -258,9 +333,100 @@ test("removeCircuit: throws if circuit not in config", async () => {
     writeCredentials(API_BASE);
 
     await assert.rejects(
-      removeCircuit("c-nonexistent"),
+      removeCircuit("c-nonexistent", API_BASE),
       /not in this project/,
     );
+  } finally {
+    cleanupConfig();
+    cleanupDir();
+  }
+});
+
+test("removeCircuit: slug URL matches by url in config (no API call)", async () => {
+  const { cleanup: cleanupDir } = withTempDir();
+  const { cleanup: cleanupConfig } = withTempConfigHome();
+  try {
+    const slugUrl = "https://modelworks.ai/openscale/deepseek-v41-flash";
+    fs.mkdirSync(".quack", { recursive: true });
+    fs.writeFileSync(
+      ".quack/config.json",
+      JSON.stringify({
+        version: 1,
+        circuits: [
+          {
+            url: slugUrl,
+            circuit_uid: "c-test",
+            name: "deepseek-v41-flash",
+            added_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+      }),
+    );
+    fs.writeFileSync(".quack/state.json", JSON.stringify({ circuits: {} }));
+    writeCredentials(API_BASE);
+
+    // No routes registered — slug resolution should not be needed
+    const { cleanup: cleanupFetch, calls } = mockFetch({});
+
+    try {
+      const result = await removeCircuit(slugUrl, API_BASE);
+      assert.equal(result.circuit_uid, "c-test");
+      assert.equal(result.name, "deepseek-v41-flash");
+      // No API calls — matched by stored url
+      assert.equal(calls.length, 0, "no API calls should have been made");
+      const config = JSON.parse(fs.readFileSync(".quack/config.json", "utf8"));
+      assert.equal(config.circuits.length, 0);
+    } finally {
+      cleanupFetch();
+    }
+  } finally {
+    cleanupConfig();
+    cleanupDir();
+  }
+});
+
+test("removeCircuit: slug URL resolves via API when not in config by url", async () => {
+  const { cleanup: cleanupDir } = withTempDir();
+  const { cleanup: cleanupConfig } = withTempConfigHome();
+  try {
+    const slugUrl = "https://modelworks.ai/openscale/deepseek-v41-flash";
+    fs.mkdirSync(".quack", { recursive: true });
+    fs.writeFileSync(
+      ".quack/config.json",
+      JSON.stringify({
+        version: 1,
+        circuits: [
+          {
+            // Stored with a different URL format (UID-based)
+            url: "https://modelworks.ai/circuits/c-test",
+            circuit_uid: "c-test",
+            name: "deepseek-v41-flash",
+            added_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+      }),
+    );
+    fs.writeFileSync(".quack/state.json", JSON.stringify({ circuits: {} }));
+    writeCredentials(API_BASE);
+
+    const { cleanup: cleanupFetch } = mockFetch({
+      "GET /api/slug/openscale/deepseek-v41-flash": {
+        json: {
+          status: "success",
+          payload: { entity_type: "circuit", entity_uid: "c-test", user_uid: "usr-test" },
+        },
+      },
+    });
+
+    try {
+      const result = await removeCircuit(slugUrl, API_BASE);
+      assert.equal(result.circuit_uid, "c-test");
+      assert.equal(result.name, "deepseek-v41-flash");
+      const config = JSON.parse(fs.readFileSync(".quack/config.json", "utf8"));
+      assert.equal(config.circuits.length, 0);
+    } finally {
+      cleanupFetch();
+    }
   } finally {
     cleanupConfig();
     cleanupDir();

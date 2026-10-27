@@ -121,10 +121,16 @@ export interface QuackState {
 
 /**
  * Parsed circuit URL or bare UID.
+ *
+ * For slug-based URLs (`/{username}/{circuitName}`), `slug` is set and
+ * `circuit_uid` is empty — the caller must resolve the slug to a circuit
+ * UID via the API (`GET /api/slug/{slug}`).
  */
 export interface ParsedCircuitRef {
   circuit_uid: string;
   version_uid: string | null;
+  /** `"username/circuitName"` for slug-based URLs, null for UID-based refs. */
+  slug: string | null;
 }
 
 /**

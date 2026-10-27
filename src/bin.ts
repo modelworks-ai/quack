@@ -333,7 +333,7 @@ async function cmdCircuitAdd(url: string): Promise<void> {
 }
 
 async function cmdCircuitRemove(ref: string): Promise<void> {
-  const result = await removeCircuit(ref);
+  const result = await removeCircuit(ref, effectiveApiBase());
   console.log(`Removed circuit '${result.name}' (${result.circuit_uid}).`);
 
   // Clear default_circuit if it pointed to the removed circuit.
