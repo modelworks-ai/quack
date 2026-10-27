@@ -48,8 +48,32 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
         // Read the full request body before forwarding (needed for 401 retry).
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(chunk as Buffer);
-        const body = chunks.length > 0 ? Buffer.concat(chunks) : null;
+        let body = chunks.length > 0 ? Buffer.concat(chunks) : null;
         debug(`body read: ${body ? body.length + " bytes" : "(empty)"}`);
+
+        // Strip `max_tokens` from circuit adaptor query requests.
+        //
+        // OpenCode's openai-compatible provider sends a low default max_tokens
+        // (~100-128). Reasoning models like DeepSeek V4.1 Flash spend this
+        // budget on reasoning before producing content, resulting in empty
+        // responses. The circuit's own max_tokens input defaults to null
+        // (model maximum), so by removing the field the upstream API uses its
+        // own sensible default.
+        const isAdaptorQuery =
+          req.method === "POST" &&
+          /\/api\/circuit-adaptors\/[^/]+\/query/.test(req.url ?? "");
+        if (isAdaptorQuery && body) {
+          try {
+            const parsed = JSON.parse(body.toString("utf8"));
+            if ("max_tokens" in parsed) {
+              delete parsed.max_tokens;
+              body = Buffer.from(JSON.stringify(parsed), "utf8");
+              debug(`stripped max_tokens from request body`);
+            }
+          } catch {
+            // Not JSON or malformed — forward as-is.
+          }
+        }
 
         // Build forwarded headers — strip client auth + host, inject our own.
         const headers: Record<string, string> = {};
@@ -60,6 +84,8 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
         }
         headers.authorization = `Bearer ${opts.getAccessToken()}`;
         headers.host = targetUrl.host;
+        // Update content-length if we modified the body.
+        if (body !== null) headers["content-length"] = String(body.length);
 
         if (opts.onDebug) {
           debug(`--- request headers (incoming) ---`);

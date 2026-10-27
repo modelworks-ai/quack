@@ -118,6 +118,84 @@ test("proxy: forwards POST body", async () => {
   }
 });
 
+test("proxy: strips max_tokens from circuit adaptor query requests", async () => {
+  let receivedBody = "";
+  const upstream = await startUpstream((req, res) => {
+    let data = "";
+    req.on("data", (chunk) => (data += chunk));
+    req.on("end", () => {
+      receivedBody = data;
+      res.end("ok");
+    });
+  });
+
+  try {
+    const proxy = await startProxy({
+      apiBase: `http://localhost:${upstream.port}`,
+      getAccessToken: () => "tok",
+      refreshToken: async () => false,
+    });
+
+    try {
+      await fetch(
+        `http://localhost:${proxy.port}/api/circuit-adaptors/ca-test/query/chat/completions`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            model: "c-test",
+            messages: [{ role: "user", content: "hi" }],
+            stream: true,
+            max_tokens: 100,
+          }),
+          headers: { "content-type": "application/json" },
+        },
+      );
+      const parsed = JSON.parse(receivedBody);
+      assert.equal("max_tokens" in parsed, false, "max_tokens should be stripped");
+      assert.equal(parsed.model, "c-test");
+      assert.equal(parsed.stream, true);
+    } finally {
+      proxy.close();
+    }
+  } finally {
+    upstream.close();
+  }
+});
+
+test("proxy: does not strip max_tokens from non-adaptor requests", async () => {
+  let receivedBody = "";
+  const upstream = await startUpstream((req, res) => {
+    let data = "";
+    req.on("data", (chunk) => (data += chunk));
+    req.on("end", () => {
+      receivedBody = data;
+      res.end("ok");
+    });
+  });
+
+  try {
+    const proxy = await startProxy({
+      apiBase: `http://localhost:${upstream.port}`,
+      getAccessToken: () => "tok",
+      refreshToken: async () => false,
+    });
+
+    try {
+      await fetch(`http://localhost:${proxy.port}/api/test`, {
+        method: "POST",
+        body: JSON.stringify({ max_tokens: 100, message: "hi" }),
+        headers: { "content-type": "application/json" },
+      });
+      const parsed = JSON.parse(receivedBody);
+      assert.equal(parsed.max_tokens, 100, "max_tokens should NOT be stripped");
+    } finally {
+      proxy.close();
+    }
+  } finally {
+    upstream.close();
+  }
+});
+
 test("proxy: refreshes token on 401 and retries", async () => {
   let requestCount = 0;
   let receivedAuth = "";
