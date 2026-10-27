@@ -9,8 +9,6 @@
  */
 
 import http from "node:http";
-import fs from "node:fs";
-import path from "node:path";
 import { Readable } from "node:stream";
 
 import type { ProxyHandle, ProxyOptions } from "./types.js";
@@ -32,18 +30,10 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
       };
 
       // TCP-level connection log — fires for EVERY request, even before
-      // HTTP parsing. This tells us if the request reached the proxy at all.
-      const tcpLine = `[tcp] ${new Date().toISOString()} ${req.method} ${req.url} from ${req.socket.remoteAddress}:${req.socket.remotePort}`;
+      // HTTP parsing.
       if (opts.onDebug) {
-        opts.onDebug(tcpLine);
+        opts.onDebug(`[tcp] ${new Date().toISOString()} ${req.method} ${req.url} from ${req.socket.remoteAddress}:${req.socket.remotePort}`);
       }
-      // Always log to a file so we can diagnose even without --debug.
-      try {
-        fs.appendFileSync(
-          path.join(process.cwd(), ".quack", "proxy.log"),
-          tcpLine + "\n",
-        );
-      } catch { /* cwd may not have .quack */ }
 
       try {
         const targetUrl = new URL(req.url ?? "/", opts.apiBase);
@@ -61,19 +51,15 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
         let body = chunks.length > 0 ? Buffer.concat(chunks) : null;
         debug(`body read: ${body ? body.length + " bytes" : "(empty)"}`);
 
-        // Set a high default max_tokens for circuit adaptor query requests.
+        // Strip output token limits from circuit adaptor query requests.
         //
         // OpenCode's openai-compatible provider sends a low default output
         // token limit (~100-128). Reasoning models like DeepSeek V4.1 Flash
         // spend this budget on reasoning before producing content, resulting
-        // in empty responses. When max_tokens is missing, the upstream API
-        // default may also be very low.
+        // in empty responses. Stripping lets the circuit's own default_value
+        // (e.g. 128000) apply instead.
         //
-        // We strip any existing token limit fields and set max_tokens to a
-        // high value (128000) that reasoning models can work with. The upstream
-        // API will cap it to the model's actual limit.
-        //
-        // Different SDKs use different field names:
+        // Different SDKs use different field names for the same concept:
         // - OpenAI Chat Completions API: max_tokens / max_completion_tokens
         // - AI SDK: maxOutputTokens
         const isAdaptorQuery =
@@ -82,7 +68,7 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
         if (isAdaptorQuery && body) {
           try {
             const parsed = JSON.parse(body.toString("utf8"));
-            let modified = false;
+            let stripped = false;
             for (const key of [
               "max_tokens",
               "max_completion_tokens",
@@ -91,25 +77,13 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
             ]) {
               if (key in parsed) {
                 delete parsed[key];
-                modified = true;
+                stripped = true;
               }
             }
-            // Always set a high max_tokens if the request is streaming
-            // (the common case for chat completions). For non-streaming,
-            // also set it since the same reasoning model issue applies.
-            parsed.max_tokens = 128000;
-            modified = true;
-            if (modified) {
+            if (stripped) {
               body = Buffer.from(JSON.stringify(parsed), "utf8");
-              debug(`set max_tokens=128000 for circuit adaptor request`);
+              debug(`stripped output token limit from request body`);
             }
-            // Log the request body for diagnosis.
-            try {
-              fs.appendFileSync(
-                path.join(process.cwd(), ".quack", "proxy.log"),
-                `[req-body] modified=${modified} ${JSON.stringify(parsed)}\n`,
-              );
-            } catch { /* ignore */ }
           } catch {
             // Not JSON or malformed — forward as-is.
           }
@@ -184,18 +158,6 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
         // Capture the circuit run UID for history saving.
         const runUid = upstream.headers.get("x-circuit-run-uid");
         const onRunComplete = opts.onRunComplete;
-
-        // Always log response status + content-type for diagnosis.
-        const respContentType = upstream.headers.get("content-type") ?? "(none)";
-        const outgoingContentType = isAdaptorQuery && respContentType.includes("application/stream+json")
-          ? "text/event-stream; charset=utf-8"
-          : respContentType;
-        try {
-          fs.appendFileSync(
-            path.join(process.cwd(), ".quack", "proxy.log"),
-            `[resp] ${upstream.status} upstream=${respContentType} outgoing=${outgoingContentType} (${Date.now() - startTime}ms) run=${runUid ?? "none"}\n`,
-          );
-        } catch { /* ignore */ }
 
         if (opts.onDebug) {
           const elapsed = Date.now() - startTime;

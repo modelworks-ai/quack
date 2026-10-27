@@ -151,7 +151,7 @@ test("proxy: strips max_tokens from circuit adaptor query requests", async () =>
         },
       );
       const parsed = JSON.parse(receivedBody);
-      assert.equal(parsed.max_tokens, 128000, "max_tokens should be set to 128000");
+      assert.equal("max_tokens" in parsed, false, "max_tokens should be stripped");
       assert.equal(parsed.model, "c-test");
       assert.equal(parsed.stream, true);
     } finally {
@@ -162,7 +162,7 @@ test("proxy: strips max_tokens from circuit adaptor query requests", async () =>
   }
 });
 
-test("proxy: does not modify max_tokens for non-adaptor requests", async () => {
+test("proxy: does not strip max_tokens from non-adaptor requests", async () => {
   let receivedBody = "";
   const upstream = await startUpstream((req, res) => {
     let data = "";
@@ -187,7 +187,7 @@ test("proxy: does not modify max_tokens for non-adaptor requests", async () => {
         headers: { "content-type": "application/json" },
       });
       const parsed = JSON.parse(receivedBody);
-      assert.equal(parsed.max_tokens, 100, "max_tokens should NOT be modified");
+      assert.equal(parsed.max_tokens, 100, "max_tokens should NOT be stripped");
     } finally {
       proxy.close();
     }
