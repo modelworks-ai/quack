@@ -173,10 +173,13 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
 
         // Always log response status + content-type for diagnosis.
         const respContentType = upstream.headers.get("content-type") ?? "(none)";
+        const outgoingContentType = isAdaptorQuery && respContentType.includes("application/stream+json")
+          ? "text/event-stream; charset=utf-8"
+          : respContentType;
         try {
           fs.appendFileSync(
             path.join(process.cwd(), ".quack", "proxy.log"),
-            `[resp] ${upstream.status} ${respContentType} (${Date.now() - startTime}ms) run=${runUid ?? "none"}\n`,
+            `[resp] ${upstream.status} upstream=${respContentType} outgoing=${outgoingContentType} (${Date.now() - startTime}ms) run=${runUid ?? "none"}\n`,
           );
         } catch { /* ignore */ }
 
