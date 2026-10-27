@@ -96,6 +96,13 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
               body = Buffer.from(JSON.stringify(parsed), "utf8");
               debug(`stripped output token limit from request body`);
             }
+            // Log the request body for diagnosis.
+            try {
+              fs.appendFileSync(
+                path.join(process.cwd(), ".quack", "proxy.log"),
+                `[req-body] ${JSON.stringify(parsed).slice(0, 500)}\n`,
+              );
+            } catch { /* ignore */ }
           } catch {
             // Not JSON or malformed — forward as-is.
           }
