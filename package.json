@@ -1,6 +1,6 @@
 {
   "name": "@modelworks/quack",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "Launch AI coding agents (OpenCode, and more) with ModelWorks circuits as model providers. OAuth login, local proxy with auth injection, run history, and git-like project config.",
   "type": "module",
   "bin": {
