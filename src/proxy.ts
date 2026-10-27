@@ -141,6 +141,19 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
         // Forward response status + headers.
         res.statusCode = upstream.status;
         for (const [key, value] of upstream.headers) {
+          // Rewrite content-type for circuit adaptor SSE responses.
+          // The API returns `application/stream+json` but OpenCode's
+          // openai-compatible provider expects `text/event-stream` to
+          // parse SSE chunks. Without this, the provider doesn't
+          // recognize the stream and the response appears empty.
+          if (
+            key.toLowerCase() === "content-type" &&
+            isAdaptorQuery &&
+            value.includes("application/stream+json")
+          ) {
+            res.setHeader(key, "text/event-stream; charset=utf-8");
+            continue;
+          }
           res.setHeader(key, value);
         }
 
