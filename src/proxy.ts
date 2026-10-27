@@ -100,7 +100,7 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
             try {
               fs.appendFileSync(
                 path.join(process.cwd(), ".quack", "proxy.log"),
-                `[req-body] stripped=${stripped} ${JSON.stringify(parsed).slice(0, 2000)}\n`,
+                `[req-body] stripped=${stripped} ${JSON.stringify(parsed)}\n`,
               );
             } catch { /* ignore */ }
           } catch {
