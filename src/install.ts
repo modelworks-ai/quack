@@ -341,6 +341,13 @@ async function main(): Promise<void> {
     fs.mkdirSync(binDir, { recursive: true });
     fs.rmSync(distDir, { recursive: true, force: true });
     copyDir(sourceDist, distDir);
+    // Write a minimal package.json so Node treats dist/ as ESM.
+    // (The source package.json with "type": "module" is at the tarball
+    // root, not inside dist/, so it doesn't get copied.)
+    fs.writeFileSync(
+      path.join(distDir, "package.json"),
+      JSON.stringify({ type: "module" }, null, 2) + "\n",
+    );
     spinner.succeed(`Installed to ${installDir}`);
   } catch (err) {
     spinner.fail("Installation failed");
