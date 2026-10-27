@@ -9,6 +9,8 @@
  */
 
 import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
 import { Readable } from "node:stream";
 
 import type { ProxyHandle, ProxyOptions } from "./types.js";
@@ -31,9 +33,17 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
 
       // TCP-level connection log — fires for EVERY request, even before
       // HTTP parsing. This tells us if the request reached the proxy at all.
+      const tcpLine = `[tcp] ${new Date().toISOString()} ${req.method} ${req.url} from ${req.socket.remoteAddress}:${req.socket.remotePort}`;
       if (opts.onDebug) {
-        opts.onDebug(`[tcp] connection: ${req.method} ${req.url} from ${req.socket.remoteAddress}:${req.socket.remotePort}`);
+        opts.onDebug(tcpLine);
       }
+      // Always log to a file so we can diagnose even without --debug.
+      try {
+        fs.appendFileSync(
+          path.join(process.cwd(), ".quack", "proxy.log"),
+          tcpLine + "\n",
+        );
+      } catch { /* cwd may not have .quack */ }
 
       try {
         const targetUrl = new URL(req.url ?? "/", opts.apiBase);
@@ -160,6 +170,15 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
         // Capture the circuit run UID for history saving.
         const runUid = upstream.headers.get("x-circuit-run-uid");
         const onRunComplete = opts.onRunComplete;
+
+        // Always log response status + content-type for diagnosis.
+        const respContentType = upstream.headers.get("content-type") ?? "(none)";
+        try {
+          fs.appendFileSync(
+            path.join(process.cwd(), ".quack", "proxy.log"),
+            `[resp] ${upstream.status} ${respContentType} (${Date.now() - startTime}ms) run=${runUid ?? "none"}\n`,
+          );
+        } catch { /* ignore */ }
 
         if (opts.onDebug) {
           const elapsed = Date.now() - startTime;
