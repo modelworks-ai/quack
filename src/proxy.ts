@@ -61,26 +61,28 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
         let body = chunks.length > 0 ? Buffer.concat(chunks) : null;
         debug(`body read: ${body ? body.length + " bytes" : "(empty)"}`);
 
-        // Strip output token limits from circuit adaptor query requests.
+        // Set a high default max_tokens for circuit adaptor query requests.
         //
         // OpenCode's openai-compatible provider sends a low default output
         // token limit (~100-128). Reasoning models like DeepSeek V4.1 Flash
         // spend this budget on reasoning before producing content, resulting
-        // in empty responses. The circuit's own max_tokens input defaults to
-        // null (model maximum), so removing the field lets the upstream API
-        // use its own sensible default.
+        // in empty responses. When max_tokens is missing, the upstream API
+        // default may also be very low.
         //
-        // Different SDKs use different field names for the same concept:
+        // We strip any existing token limit fields and set max_tokens to a
+        // high value (128000) that reasoning models can work with. The upstream
+        // API will cap it to the model's actual limit.
+        //
+        // Different SDKs use different field names:
         // - OpenAI Chat Completions API: max_tokens / max_completion_tokens
         // - AI SDK: maxOutputTokens
-        // We strip all known variants.
         const isAdaptorQuery =
           req.method === "POST" &&
           /\/api\/circuit-adaptors\/[^/]+\/query/.test(req.url ?? "");
         if (isAdaptorQuery && body) {
           try {
             const parsed = JSON.parse(body.toString("utf8"));
-            let stripped = false;
+            let modified = false;
             for (const key of [
               "max_tokens",
               "max_completion_tokens",
@@ -89,18 +91,23 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
             ]) {
               if (key in parsed) {
                 delete parsed[key];
-                stripped = true;
+                modified = true;
               }
             }
-            if (stripped) {
+            // Always set a high max_tokens if the request is streaming
+            // (the common case for chat completions). For non-streaming,
+            // also set it since the same reasoning model issue applies.
+            parsed.max_tokens = 128000;
+            modified = true;
+            if (modified) {
               body = Buffer.from(JSON.stringify(parsed), "utf8");
-              debug(`stripped output token limit from request body`);
+              debug(`set max_tokens=128000 for circuit adaptor request`);
             }
             // Log the request body for diagnosis.
             try {
               fs.appendFileSync(
                 path.join(process.cwd(), ".quack", "proxy.log"),
-                `[req-body] stripped=${stripped} ${JSON.stringify(parsed)}\n`,
+                `[req-body] modified=${modified} ${JSON.stringify(parsed)}\n`,
               );
             } catch { /* ignore */ }
           } catch {
