@@ -51,24 +51,40 @@ export function startProxy(opts: ProxyOptions): Promise<ProxyHandle> {
         let body = chunks.length > 0 ? Buffer.concat(chunks) : null;
         debug(`body read: ${body ? body.length + " bytes" : "(empty)"}`);
 
-        // Strip `max_tokens` from circuit adaptor query requests.
+        // Strip output token limits from circuit adaptor query requests.
         //
-        // OpenCode's openai-compatible provider sends a low default max_tokens
-        // (~100-128). Reasoning models like DeepSeek V4.1 Flash spend this
-        // budget on reasoning before producing content, resulting in empty
-        // responses. The circuit's own max_tokens input defaults to null
-        // (model maximum), so by removing the field the upstream API uses its
-        // own sensible default.
+        // OpenCode's openai-compatible provider sends a low default output
+        // token limit (~100-128). Reasoning models like DeepSeek V4.1 Flash
+        // spend this budget on reasoning before producing content, resulting
+        // in empty responses. The circuit's own max_tokens input defaults to
+        // null (model maximum), so removing the field lets the upstream API
+        // use its own sensible default.
+        //
+        // Different SDKs use different field names for the same concept:
+        // - OpenAI Chat Completions API: max_tokens / max_completion_tokens
+        // - AI SDK: maxOutputTokens
+        // We strip all known variants.
         const isAdaptorQuery =
           req.method === "POST" &&
           /\/api\/circuit-adaptors\/[^/]+\/query/.test(req.url ?? "");
         if (isAdaptorQuery && body) {
           try {
             const parsed = JSON.parse(body.toString("utf8"));
-            if ("max_tokens" in parsed) {
-              delete parsed.max_tokens;
+            let stripped = false;
+            for (const key of [
+              "max_tokens",
+              "max_completion_tokens",
+              "max_output_tokens",
+              "maxOutputTokens",
+            ]) {
+              if (key in parsed) {
+                delete parsed[key];
+                stripped = true;
+              }
+            }
+            if (stripped) {
               body = Buffer.from(JSON.stringify(parsed), "utf8");
-              debug(`stripped max_tokens from request body`);
+              debug(`stripped output token limit from request body`);
             }
           } catch {
             // Not JSON or malformed — forward as-is.
